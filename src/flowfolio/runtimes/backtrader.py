@@ -143,7 +143,7 @@ class BacktraderRuntime:
                     return
                 amount = session.flow(index)
                 if amount:
-                    self.broker.add_cash(float(amount))
+                    self.broker.add_cash(NativeDecimal(amount))
                     # Pinned native method flushes Backtrader's deferred cash
                     # additions before native submitted-order affordability checks.
                     self.broker._get_value()

@@ -9,7 +9,7 @@ class Strategy:
 
     def decide(self, context):
         month = context.date[:7]
-        if context.state.get("month") == month or context.equity == 0:
+        if (context.state.get("month") == month and context.contribution == 0) or context.equity == 0:
             return Decision(state={"month": month})
         weights = {self.p["equity_symbol"]: self.p["equity_weight"],
                    self.p["bond_symbol"]: D(1) - self.p["equity_weight"]}

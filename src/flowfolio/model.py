@@ -10,7 +10,7 @@ from typing import Protocol, Any
 import hashlib
 import json
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 PROTOCOL = "1.0"
 ZERO = Decimal(0)
 LOT = Decimal("0.00000001")

@@ -1,5 +1,5 @@
 {
-  "protocol": "1.0", "name": "reserve_drawdown", "version": "0.1.0",
+  "protocol": "1.0", "name": "reserve_drawdown", "version": "0.1.1",
   "description": "按月保留现金储备，观察到回撤后分批加仓。",
   "entrypoint": "strategy.py:Strategy",
   "requires": ["monthly_contributions", "cash_budget_orders", "budget_transfers"],

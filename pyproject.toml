@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "flowfolio"
-version = "0.1.0"
+version = "0.1.1"
 description = "Portable strategy protocols and backtests for recurring cash flows and long-term allocation"
 readme = "README.md"
 requires-python = ">=3.11"

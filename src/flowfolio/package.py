@@ -1,15 +1,20 @@
 """Portable, content-addressed strategy packages and independent cases."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import date
 from collections.abc import Mapping
 import hashlib
 import importlib.util
 import json
+import sys
+from threading import RLock
 
 from .model import Bar, D, FeeModel, PROTOCOL, ZERO, digest, freeze
+
+
+_IMPORT_LOCK = RLock()
 
 
 def keys(obj, allowed, required=()):
@@ -104,11 +109,24 @@ class StrategyPackage:
     path: Path
     metadata: Mapping
     fingerprint: str
+    _source: bytes = field(repr=False)
 
     @classmethod
     def load(cls, path):
         root = Path(path).resolve()
-        data = json.loads((root / "strategy.json").read_text(encoding="utf-8"))
+        # Capture each artifact once. Metadata and executed source must be the
+        # very bytes included in the package digest, not later filesystem reads.
+        artifacts = {}
+        for file in sorted(root.rglob("*")):
+            if file.is_symlink():
+                raise ValueError("package symlinks are not supported")
+            relative = file.relative_to(root)
+            if file.is_file() and not any(p.startswith(".") or p == "__pycache__" for p in relative.parts):
+                artifacts[relative.as_posix()] = file.read_bytes()
+        for required in ("strategy.json", "strategy.py", "README.md"):
+            if required not in artifacts:
+                raise ValueError(f"missing package artifact {required}")
+        data = json.loads(artifacts["strategy.json"].decode("utf-8"))
         keys(data, {"protocol", "name", "version", "entrypoint", "requires", "parameters", "description"},
              {"protocol", "name", "version", "entrypoint", "requires", "parameters", "description"})
         if data["entrypoint"] != "strategy.py:Strategy":
@@ -121,18 +139,10 @@ class StrategyPackage:
             keys(spec, {"type", "default", "minimum", "maximum", "description"}, {"type", "default", "description"})
             if spec["type"] not in {"decimal", "string"}:
                 raise ValueError(f"unknown parameter type: {name}")
-        for required in ("strategy.py", "README.md", "tests"):
-            if not (root / required).exists():
-                raise ValueError(f"missing package artifact {required}")
-        if not any((root / "tests").glob("test_*.py")):
+        if not any(Path(name).parent == Path("tests") and Path(name).match("test_*.py") for name in artifacts):
             raise ValueError("package must include test_*.py cases")
-        items = []
-        for file in sorted(root.rglob("*")):
-            if file.is_symlink():
-                raise ValueError("package symlinks are not supported")
-            if file.is_file() and not any(p.startswith(".") or p == "__pycache__" for p in file.relative_to(root).parts):
-                items.append((file.relative_to(root).as_posix(), hashlib.sha256(file.read_bytes()).hexdigest()))
-        obj = cls(root, freeze(data), digest(items))
+        items = [(name, hashlib.sha256(content).hexdigest()) for name, content in artifacts.items()]
+        obj = cls(root, freeze(data), digest(items), artifacts["strategy.py"])
         obj.parameters({})
         return obj
 
@@ -154,7 +164,21 @@ class StrategyPackage:
         # Check that the package did not change between preflight and import.
         if self.load(self.path).fingerprint != self.fingerprint:
             raise ValueError("strategy package changed after loading")
-        spec = importlib.util.spec_from_file_location(f"flowfolio_strategy_{self.fingerprint}", self.path / "strategy.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module.Strategy(parameters)
+        name = f"flowfolio_strategy_{self.fingerprint}"
+        spec = importlib.util.spec_from_file_location(name, self.path / "strategy.py")
+        # compile(bytes) handles source encoding and never reads/writes a pyc.
+        # Disable inherited future flags and host optimization-level differences.
+        code = compile(self._source, str(self.path / "strategy.py"), "exec", dont_inherit=True, optimize=0)
+        with _IMPORT_LOCK:
+            module = importlib.util.module_from_spec(spec)
+            previous = sys.modules.get(name)
+            sys.modules[name] = module
+            try:
+                exec(code, module.__dict__)
+                return module.Strategy(parameters)
+            except BaseException:
+                if previous is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = previous
+                raise

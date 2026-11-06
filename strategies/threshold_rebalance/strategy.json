@@ -1,5 +1,5 @@
 {
-  "protocol": "1.0", "name": "threshold_rebalance", "version": "0.1.0",
+  "protocol": "1.0", "name": "threshold_rebalance", "version": "0.1.1",
   "description": "双资产月度配置，偏离阈值时卖出超配资产，以可用现金补足低配资产。",
   "entrypoint": "strategy.py:Strategy",
   "requires": ["monthly_contributions", "cash_budget_orders", "fractional_shares"],

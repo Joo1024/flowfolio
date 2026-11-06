@@ -16,7 +16,8 @@ GPLv3+ 与本项目选择的 GPL-3.0-or-later 相容。它的发布节奏较慢�
 未被重写；reference runtime 从未被导入。CommissionInfo 负责协议费用报价和货币
 运算边界。原生引擎可能多次询价；报价无副作用，只有原生成交会扣费用。
 
-现金和订单数量使用与浮点常量互操作的 Decimal 标量；这改变数值表示，不替代
+现金、每笔外部入金和订单数量使用与浮点常量互操作的 Decimal 标量；入金不能先转
+float 再转回 Decimal，否则八位小数的大额现金流仍可能丢失精度。这改变数值表示，不替代
 原生成交或账户算法。数据线仍是 Backtrader 原生浮点价格，输入精度限定4位小数。
 通过 CommissionInfo 的 getvaluesize/profitandloss/getoperationcost 边界计算货币，
 避免原生 float 在“成本+费用恰好等于现金”时产生负尾差并误拒绝。

@@ -46,6 +46,7 @@ flowfolio verify --result ../flowfolio-work/dca-reference --case cases/hand_fees
 包内含 `strategy.json`、实现、说明和测试。拷贝整个目录即可用已安装的
 SDK/CLI 加载；无需修改后端。参数用 `--param drawdown=0.2` 传入。
 wheel 提供框架，策略与案例随仓库及源码发行包交付。
+三个示例包均在每月首次观察和正向入金时决策，支持月中到账；储备加仓每月最多一次。
 
 ## SDK
 
@@ -117,7 +118,7 @@ python -m build --outdir ../flowfolio-work/dist
 覆盖未来数据隔离、不可变快照、订单拒绝无副作用、预算守恒、费用舍入、
 超额卖出、多笔成交、复现、原生执行证据和跨后端逐字段比较。
 手算过程见 [手算金标准](docs/hand-calculations.md)。
-首版本地 **114 项测试通过**，详细范围与安装验证见 [验证记录](docs/validation.md)。
+当前 0.1.1 本地 **151 项测试通过**，含37项审查修复回归测试，详见 [验证记录](docs/validation.md)。
 
 正确性验证不以收益高低为判断标准。研究案例为合成固定数据，不代表投资建议
 或真实市场表现。首版不包含 Web、机器学习、自动优化、实盘、衍生品或集群。

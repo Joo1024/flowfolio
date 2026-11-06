@@ -1,6 +1,6 @@
 # 能力矩阵（protocol 1.0）
 
-Reference 0.1.0 和 Backtrader adapter 0.1.0 的共同能力如下。
+Reference 0.1.1 和 Backtrader adapter 0.1.1 的共同能力如下。
 完整机器可读列表：`flowfolio capabilities`。
 
 |能力标识|Reference|Backtrader|范围|
@@ -34,3 +34,4 @@ Reference 0.1.0 和 Backtrader adapter 0.1.0 的共同能力如下。
 价格最多4位小数、财务输入最多8位小数、账户值≤1e9；超界报错。计算使用固定
 40位 Decimal 上下文，不受调用者设置影响；运行后恢复调用者上下文。
 比较货币/股数绝对容差1e-7、收益1e-10；无相对容差，也不按收益好坏验收。
+这些容差用于结果比较和原生账户对账，不允许超预算下单、负预算或违反拒绝政策。

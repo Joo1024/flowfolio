@@ -5,7 +5,51 @@ from .model import D, ZERO, LOT, TOLERANCE, RETURN_TOLERANCE, plain
 
 def verify(result, case):
     with localcontext(DecimalContext(prec=40)):
-        return _verify(result, case)
+        try:
+            return _verify(result, case)
+        except (KeyError, TypeError, ValueError, ArithmeticError) as error:
+            return [{"layer": "schema", "path": "result", "message": f"{type(error).__name__}: {error}"}]
+
+
+def _intent_error(intent, available, sellable, prices, fees, policy):
+    """Validate against the pre-execution reservations, independently of prepare.
+
+    This is not a fill generator: the ledger below must still prove actual
+    quantities, fee quotations, maximal affordability and account conservation.
+    """
+    amount = D(intent["amount"])
+    error = "missing_provenance" if not intent["reason"] or not intent["rule_id"] else None
+    if amount <= 0:
+        error = error or "nonpositive_amount"
+    if intent["kind"] == "transfer":
+        source, target = intent["source"], intent["target"]
+        if source not in available or target not in available or source == target:
+            return error or "invalid_budget_transfer"
+        return error or ("insufficient_budget" if amount > available[source] else None)
+    symbol, budget, side = intent["symbol"], intent["budget"], intent["side"]
+    if symbol not in prices:
+        error = error or "unknown_symbol"
+    if budget not in available:
+        error = error or "unknown_budget"
+    if error:
+        return error
+    price = prices[symbol]
+    if side == "buy":
+        if policy == "reject" and amount > available[budget]:
+            return "insufficient_budget"
+        if min(amount, available[budget]) < LOT * price + fees.calculate(LOT, price):
+            return "budget_below_minimum_fill"
+    elif side == "sell":
+        if amount > sellable[symbol]:
+            return "oversell"
+        quantity = (amount / LOT).to_integral_value(rounding=ROUND_FLOOR) * LOT
+        if quantity == 0:
+            return "quantity_below_lot"
+        if quantity * price < fees.calculate(quantity, price):
+            return "fee_exceeds_proceeds"
+    else:
+        return "invalid_side"
+    return None
 
 
 def _verify(result, case):
@@ -18,8 +62,12 @@ def _verify(result, case):
         if abs(D(actual) - D(expected)) > tolerance:
             findings.append({"layer": layer, "path": path, "actual": str(actual), "expected": str(expected)})
 
-    if r["manifest"]["status"] == "unsupported":
-        return [{"layer": "compatibility", "path": "manifest.status", "actual": "unsupported", "expected": "completed"}]
+    if r["manifest"]["status"] != "completed":
+        return [{"layer": "compatibility", "path": "manifest.status", "actual": r["manifest"]["status"], "expected": "completed"}]
+    for key, expected in (("execution", plain(case.data["execution"])),
+                          ("currency", case.data["currency"]), ("fees", plain(case.fees))):
+        if r["manifest"][key] != expected:
+            findings.append({"layer": "inputs", "path": "manifest." + key, "message": "manifest disagrees with the case"})
     cash = D(case.data["initial_cash"])
     holdings = {s: D(case.data["initial_positions"].get(s, "0")) for s in case.bars[0].close}
     budgets = {"invest": cash, "reserve": ZERO}
@@ -55,17 +103,35 @@ def _verify(result, case):
         available, sellable = dict(budgets), dict(holdings)
         for intent in (x for x in r["intents"] if x["date"] == bar.date):
             key = intent["intent_id"]
+            if intent["kind"] not in {"order", "transfer"}:
+                findings.append({"layer": "execution", "path": key + ".kind", "message": "unknown intent kind"})
+                continue
             f = (fill_map if intent["kind"] == "order" else transfer_map).get(key)
             if f is None:
+                findings.append({"layer": "execution", "path": key, "message": "missing feedback of the required kind"})
                 continue
-            for field in ("date", "reason", "rule_id"):
+            before_binding = len(findings)
+            binding_fields = ("date", "reason", "rule_id") + (
+                ("symbol", "side", "budget") if intent["kind"] == "order" else ("kind", "source", "target"))
+            for field in binding_fields:
                 if f[field] != intent[field]:
-                    findings.append({"layer": "execution", "path": f"{key}.{field}", "message": "provenance mismatch"})
+                    findings.append({"layer": "execution", "path": f"{key}.{field}", "actual": f[field], "expected": intent[field]})
+            amount_field = "requested" if intent["kind"] == "order" else "amount"
+            check(f"{key}.{amount_field}", f[amount_field], intent["amount"], ZERO, "execution")
+            if len(findings) != before_binding:
+                # Never interpret mismatched feedback as a different trade.
+                continue
+            error = _intent_error(intent, available, sellable, bar.open, case.fees,
+                                  case.data["execution"]["insufficient_cash"])
             if intent["kind"] == "transfer":
+                expected_status = "rejected" if error else "transferred"
+                if f["status"] != expected_status or f["rejection"] != error:
+                    findings.append({"layer": "execution", "path": key + ".status",
+                                     "actual": f["status"], "expected": expected_status,
+                                     "message": f"expected rejection: {error}"})
+                    continue
                 if f["status"] == "transferred":
                     amount = D(intent["amount"])
-                    if amount > available[intent["source"]] + TOLERANCE:
-                        findings.append({"layer": "execution", "path": key, "message": "transfer exceeds unreserved budget"})
                     budgets[intent["source"]] -= amount
                     budgets[intent["target"]] += amount
                     available[intent["source"]] -= amount
@@ -75,53 +141,53 @@ def _verify(result, case):
             if f["status"] == "rejected":
                 for field in ("quantity", "fee", "notional", "cash_delta"):
                     check(key + "." + field, f[field], ZERO, ZERO, "execution")
-                if not f["rejection"]:
-                    findings.append({"layer": "execution", "path": key, "message": "rejection needs reason"})
-                symbol, budget, amount = intent["symbol"], intent["budget"], D(intent["amount"])
-                if symbol in bar.open and budget in available and amount > 0 and intent["reason"] and intent["rule_id"]:
-                    price = bar.open[symbol]
-                    can_buy = (intent["side"] == "buy" and
-                               (case.data["execution"]["insufficient_cash"] == "clip" or amount <= available[budget]) and
-                               min(amount, available[budget]) >= LOT * price + case.fees.calculate(LOT, price))
-                    can_sell = (intent["side"] == "sell" and LOT <= amount <= sellable[symbol] and
-                                amount * price >= case.fees.calculate(amount, price))
-                    if can_buy or can_sell:
-                        findings.append({"layer": "execution", "path": key, "message": "rejected an executable intent"})
+                check(key + ".residual", f["residual"], intent["amount"], ZERO, "execution")
+                if f["price"] is not None:
+                    findings.append({"layer": "execution", "path": key + ".price", "message": "rejected order must not have a fill price"})
+                if error is None:
+                    findings.append({"layer": "execution", "path": key, "message": "rejected an executable intent"})
+                elif f["rejection"] != error:
+                    findings.append({"layer": "execution", "path": key + ".rejection", "actual": f["rejection"], "expected": error})
                 continue
-            price = bar.open[f["symbol"]]
+            if error or f["status"] not in {"filled", "partial"} or f["rejection"] is not None:
+                findings.append({"layer": "execution", "path": key + ".status",
+                                 "message": f"invalid execution status or executed an invalid intent: {error}"})
+                continue
+            symbol, budget, side = intent["symbol"], intent["budget"], intent["side"]
+            price = bar.open[symbol]
             check(key + ".price", f["price"], price, ZERO, "execution")
-            check(key + ".notional", notional, quantity * price, layer="execution")
+            check(key + ".notional", notional, quantity * price, ZERO, "execution")
             check(key + ".fee", fee, case.fees.calculate(quantity, price), ZERO, "execution")
             if quantity <= 0 or quantity % LOT != 0:
                 findings.append({"layer": "execution", "path": key, "message": "invalid fill lot"})
-            if f["side"] == "buy":
-                limit = min(D(intent["amount"]), available[f["budget"]])
-                if notional + fee > limit + TOLERANCE:
+            if side == "buy":
+                limit = min(D(intent["amount"]), available[budget])
+                if quantity * price + fee > limit:
                     findings.append({"layer": "execution", "path": key, "message": "fill exceeds unreserved budget"})
                 if (quantity + LOT) * price + case.fees.calculate(quantity + LOT, price) <= limit:
                     findings.append({"layer": "execution", "path": key, "message": "buy did not execute maximum affordable lot"})
-                expected_status = "partial" if D(intent["amount"]) > available[f["budget"]] else "filled"
-                available[f["budget"]] -= notional + fee
-                residual = D(intent["amount"]) - notional - fee
+                expected_status = "partial" if D(intent["amount"]) > available[budget] else "filled"
+                available[budget] -= quantity * price + fee
+                residual = D(intent["amount"]) - quantity * price - fee
             else:
                 expected_quantity = (D(intent["amount"]) / LOT).to_integral_value(rounding=ROUND_FLOOR) * LOT
                 check(key + ".quantity", quantity, expected_quantity, ZERO, "execution")
-                if quantity > sellable[f["symbol"]] + TOLERANCE:
+                if quantity > sellable[symbol] + TOLERANCE:
                     findings.append({"layer": "execution", "path": key, "message": "fill exceeds unreserved holdings"})
-                sellable[f["symbol"]] -= quantity
+                sellable[symbol] -= quantity
                 expected_status = "filled"
                 residual = D(intent["amount"]) - quantity
             if f["status"] != expected_status:
                 findings.append({"layer": "execution", "path": key + ".status", "actual": f["status"], "expected": expected_status})
             check(key + ".residual", f["residual"], residual)
-            signed = quantity if f["side"] == "buy" else -quantity
+            signed = quantity if side == "buy" else -quantity
             delta = -signed * price - fee
             check(key + ".cash_delta", f["cash_delta"], delta)
-            if f["side"] == "buy" and -delta > D(intent["amount"]) + TOLERANCE:
+            if side == "buy" and -delta > D(intent["amount"]):
                 findings.append({"layer": "execution", "path": key, "message": "buy exceeded intent budget"})
-            holdings[f["symbol"]] += signed
+            holdings[symbol] += signed
             cash += delta
-            budgets[f["budget"]] += delta
+            budgets[budget] += delta
             total_fees += fee
         equity = cash + sum((holdings[s] * bar.close[s] for s in holdings), ZERO)
         denominator = previous + flow
@@ -139,7 +205,7 @@ def _verify(result, case):
                 findings.append({"layer": "accounting", "path": section, "message": "account keys mismatch"})
             for key, amount in expected.items():
                 check(f"valuations[{index}].{section}.{key}", value[section].get(key, "0"), amount)
-                if amount < -TOLERANCE:
+                if amount < 0:
                     findings.append({"layer": "accounting", "path": section + "." + key, "message": "negative balance"})
         check(f"valuations[{index}].budget_sum", sum((D(x) for x in value["budgets"].values()), ZERO), value["cash"])
     expected_metrics = {"final_value": previous, "contributions": contributions,

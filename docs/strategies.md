@@ -38,7 +38,7 @@ class Strategy:
 
     def decide(self, context):
         month = context.date[:7]
-        if context.state.get("month") == month:
+        if context.state.get("month") == month and context.contribution == 0:
             return Decision(state=context.state)
         amount = context.budgets["invest"] * self.fraction
         actions = (OrderIntent("EQUITY", "buy", amount,
@@ -63,9 +63,16 @@ state 为上次 Decision 返回的递归只读状态。
 
 参数类型支持 string、decimal，未知参数或超出声明范围拒绝。版本变化与代码变化
 都记录在 manifest，整个包内容参与哈希；缓存和隐藏文件不参与。包不允许符号链接，
-策略实现是单个 strategy.py；加载不修改 sys.path。第三方 Python 包属于受信任代码，
+策略实现是单个 strategy.py；加载不修改 sys.path。元数据、哈希和源码来自同一份
+字节快照。执行直接编译该快照，不读取或写入 pyc；每次运行创建新的模块和实例，
+模块在执行前注册到 sys.modules，支持 dataclass 等标准库用法，失败时恢复先前注册。
+第三方 Python 包属于受信任代码，
 只读 Context 保障接口纪律而非防御恶意的反射/磁盘读取。
 
 将包目录交给 `flowfolio compare --strategy my_strategy --case ...` 即可验证两个后端。
 独立测试至少包含一个可手算案例和动作原因断言。不要按后端名分支，也不要凭收益优劣
 断言正确。包声明 `requires`，框架会额外从实验配置推导必要能力。
+
+示例包在每月首次观察及正向入金时决策，避免月初空账户观察吞掉月中投入。
+两者同日发生只调用一次；没有新入金的同月后续日期不重复下单。
+现金储备包另行记录 deployment_month，保证同月两次决策不会重复部署储备。
