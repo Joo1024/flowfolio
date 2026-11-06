@@ -1,0 +1,12 @@
+{
+  "protocol": "1.0", "name": "reserve_drawdown", "version": "0.1.0",
+  "description": "按月保留现金储备，观察到回撤后分批加仓。",
+  "entrypoint": "strategy.py:Strategy",
+  "requires": ["monthly_contributions", "cash_budget_orders", "budget_transfers"],
+  "parameters": {
+    "symbol": {"type": "string", "default": "EQUITY", "description": "投资标的"},
+    "reserve_fraction": {"type": "decimal", "default": "0.25", "minimum": "0", "maximum": "1", "description": "当期投资预算转入储备的比例"},
+    "drawdown": {"type": "decimal", "default": "0.15", "minimum": "0.0001", "maximum": "1", "description": "从已观察最高收盘价的回撤阈值"},
+    "deploy_fraction": {"type": "decimal", "default": "0.5", "minimum": "0", "maximum": "1", "description": "每个触发月份投入的储备比例"}
+  }
+}
