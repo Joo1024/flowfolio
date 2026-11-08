@@ -14,9 +14,9 @@ Agent 接口把环境中的执行与任务定义分离；BaseVerifier 独立返�
 |Harbor 概念|flowfolio 对应|这里的关键约束|
 |---|---|---|
 |任务包|StrategyPackage|策略代码只依赖公共领域协议|
-|任务/环境条件|ExperimentCase|数据、投入、费用与策略独立|
-|agent 的执行职责|BacktestRuntime|原生推进时间、执行、记账|
-|agent adapter|RuntimeAdapter|对接引擎，不重写每个策略|
+|任务/环境条件|Scenario|数据、投入、费用与策略独立|
+|agent 的执行职责|Simulator|原生推进时间、执行、记账|
+|agent adapter|Backtrader 适配模块|将场景和订单转换为原生引擎输入|
 |trial|一次 run|包×案例×兼容后端|
 |verifier|独立金融/协议验证|重建账本、校验现金流调整收益|
 

@@ -1,12 +1,15 @@
 import json
 import pytest
-from flowfolio import D, run, ExperimentCase, StrategyPackage, FutureDataError
+from flowfolio import D, run, Scenario, StrategyPackage, FutureDataError, EvaluationSpec, evaluate
 from flowfolio.model import Bar, MarketView
-from flowfolio.runtimes.reference import ReferenceRuntime
+from flowfolio.simulators.reference import ReferenceSimulator
+from flowfolio.verify import verify
 
 
-def test_readonly_and_feedback(make_package, flat_data, runtime):
-    pkg = make_package('''for mapping, key in ((c.positions, "EQUITY"), (c.budgets, "invest"), (c.market.prices, "EQUITY"), (c.state, "x")):
+def test_readonly_and_feedback(make_package, flat_data, simulator):
+    pkg = make_package('''assert isinstance(c, StrategyContext)
+assert isinstance(c.account, AccountState)
+for mapping, key in ((c.account.positions, "EQUITY"), (c.account.budgets, "invest"), (c.market.prices, "EQUITY"), (c.state, "x")):
     try:
         mapping[key] = D(99)
         raise AssertionError("mutable context")
@@ -22,23 +25,39 @@ if c.state:
     assert c.feedback[0]["quantity"] == D(10)
     assert c.feedback[0]["rule_id"] == "monthly"
     assert c.state["nested"]["values"] == ("ok",)
-return Decision((OrderIntent("EQUITY", "buy", D(100), "test", "monthly"),), {"nested": {"values": ["ok"]}})''')
-    result = run(pkg, ExperimentCase.from_dict(flat_data), runtime)
+return StrategyDecision((OrderIntent("EQUITY", "buy", D(100), "test", "monthly"),), {"nested": {"values": ["ok"]}})''')
+    result = run(pkg, Scenario.from_dict(flat_data), simulator)
     assert result.manifest["status"] == "completed"
 
 
+def test_verification_expectations_are_separate_from_scenario(root, flat_data):
+    original = Scenario.from_dict(flat_data)
+    flat_data["evaluation"] = {"expected_metrics": {"final_value": "301"}}
+    changed = Scenario.from_dict(flat_data)
+    assert original == changed
+    assert original.fingerprint == changed.fingerprint
+
+    strategy = root / "strategies/dca"
+    baseline = run(strategy, original)
+    assert [finding["path"] for finding in verify(baseline, changed)] == ["evaluation.final_value"]
+    result = run(strategy, changed)
+    assert result.valuations == baseline.valuations
+    assert result.manifest["status"] == "invalid"
+    assert [finding["path"] for finding in result.diagnostics] == ["evaluation.final_value"]
+
+
 @pytest.mark.parametrize("capability", ["withdrawals", "multi_currency", "short_sales", "volume_partial", "unknown"])
-def test_unsupported_before_import(make_package, flat_data, capability, runtime):
+def test_unsupported_before_import(make_package, flat_data, capability, simulator):
     pkg = make_package("raise AssertionError('must not execute')", requires=[capability])
     (pkg / "strategy.py").write_text("raise AssertionError('must not import')\n")
-    result = run(pkg, ExperimentCase.from_dict(flat_data), runtime)
+    result = run(pkg, Scenario.from_dict(flat_data), simulator)
     assert result.manifest["status"] == "unsupported"
     assert capability in result.diagnostics[0]["message"]
     assert not result.fills and not result.valuations
 
 
 @pytest.mark.parametrize("change", ["withdrawal", "slippage", "volume", "timing", "adjustment", "policy", "protocol"])
-def test_case_requirements_are_inferred(root, flat_data, runtime, change):
+def test_case_requirements_are_inferred(root, flat_data, simulator, change):
     if change == "withdrawal": flat_data["cashflows"][0]["amount"] = "-1"
     elif change == "slippage": flat_data["execution"]["slippage"] = "0.01"
     elif change == "volume": flat_data["execution"]["volume_limit"] = "10"
@@ -46,16 +65,29 @@ def test_case_requirements_are_inferred(root, flat_data, runtime, change):
     elif change == "adjustment": flat_data["execution"]["price_adjustment"] = "raw"
     elif change == "policy": flat_data["execution"]["insufficient_cash"] = "silent"
     else: flat_data["protocol"] = "2.0"
-    result = run(root / "strategies/dca", ExperimentCase.from_dict(flat_data), runtime)
+    result = run(root / "strategies/dca", Scenario.from_dict(flat_data), simulator)
     assert result.manifest["status"] == "unsupported"
 
 
 def test_missing_fee_capability_is_not_ignored(root):
-    class Limited(ReferenceRuntime):
-        capabilities = ReferenceRuntime.capabilities - {"fixed_fee"}
+    class Limited(ReferenceSimulator):
+        capabilities = ReferenceSimulator.capabilities - {"fixed_fee"}
     result = run(root / "strategies/dca", root / "cases/hand_fees.json", Limited())
     assert result.manifest["status"] == "unsupported"
     assert "fixed_fee" in result.diagnostics[0]["message"]
+
+
+def test_simulator_cannot_enable_undefined_slippage(root, flat_data):
+    class ClaimsSlippage(ReferenceSimulator):
+        capabilities = ReferenceSimulator.capabilities | {"slippage"}
+
+        def execute(self, run):
+            raise AssertionError("must reject before simulator execution")
+
+    flat_data["execution"]["slippage"] = "0.01"
+    result = run(root / "strategies/dca", Scenario.from_dict(flat_data), ClaimsSlippage())
+    assert result.manifest["status"] == "unsupported"
+    assert "slippage: unsupported by protocol" in result.diagnostics[0]["message"]
 
 
 @pytest.mark.parametrize("corrupt", ["nan", "numeric", "zero_price", "missing_symbol", "duplicate_date", "bad_date", "unknown_key", "negative_fee", "too_precise", "same_month"])
@@ -70,31 +102,31 @@ def test_invalid_case_rejected(flat_data, corrupt):
     elif corrupt == "negative_fee": flat_data["fees"]["fixed"] = "-1"
     elif corrupt == "too_precise": flat_data["bars"][0]["open"]["EQUITY"] = "1.00001"
     elif corrupt == "same_month": flat_data["cashflows"].append(flat_data["cashflows"][0].copy())
-    with pytest.raises(ValueError): ExperimentCase.from_dict(flat_data)
+    with pytest.raises(ValueError): Scenario.from_dict(flat_data)
 
 
 def test_parameter_validation_and_hash(root, tmp_path):
     package = StrategyPackage.load(root / "strategies/reserve_drawdown")
     with pytest.raises(ValueError): package.parameters({"drawdown": "-1"})
     with pytest.raises(ValueError): package.parameters({"typo": "1"})
-    case = ExperimentCase.load(root / "cases/flat.json")
+    case = Scenario.load(root / "cases/flat.json")
     changed = json.loads((root / "cases/flat.json").read_text())
     changed["cashflows"][0]["amount"] = "101"
-    assert case.fingerprint != ExperimentCase.from_dict(changed).fingerprint
+    assert case.fingerprint != Scenario.from_dict(changed).fingerprint
 
 
-def test_same_inputs_reproduce_exactly(root, runtime):
-    a = run(root / "strategies/reserve_drawdown", root / "cases/hand_fees.json", runtime)
-    b = run(root / "strategies/reserve_drawdown", root / "cases/hand_fees.json", runtime)
+def test_same_inputs_reproduce_exactly(root, simulator):
+    a = run(root / "strategies/reserve_drawdown", root / "cases/hand_fees.json", simulator)
+    b = run(root / "strategies/reserve_drawdown", root / "cases/hand_fees.json", simulator)
     assert a.to_json() == b.to_json()
 
 
-def test_changed_future_does_not_change_past(root, flat_data, runtime):
-    before = run(root / "strategies/reserve_drawdown", ExperimentCase.from_dict(flat_data), runtime)
+def test_changed_future_does_not_change_past(root, flat_data, simulator):
+    before = run(root / "strategies/reserve_drawdown", Scenario.from_dict(flat_data), simulator)
     flat_data["bars"][-1]["open"]["EQUITY"] = "100"
     flat_data["bars"][-1]["close"]["EQUITY"] = "200"
     flat_data["evaluation"] = {}
-    after = run(root / "strategies/reserve_drawdown", ExperimentCase.from_dict(flat_data), runtime)
+    after = run(root / "strategies/reserve_drawdown", Scenario.from_dict(flat_data), simulator)
     assert before.intents == after.intents
     assert before.valuations[:-1] == after.valuations[:-1]
 
@@ -109,21 +141,26 @@ def test_package_cannot_depend_on_backends(root):
         assert "backtrader" not in code and "reference" not in code
 
 
-def test_host_decimal_context_cannot_change_results(root, runtime):
+def test_host_decimal_context_cannot_change_results(root, simulator):
     from decimal import localcontext
-    expected = run(root / "strategies/reserve_drawdown", root / "cases/allocation_cycle.json", runtime)
+    expected = run(root / "strategies/reserve_drawdown", root / "cases/allocation_cycle.json", simulator)
     with localcontext() as context:
         context.prec = 6
-        actual = run(root / "strategies/reserve_drawdown", root / "cases/allocation_cycle.json", runtime)
+        actual = run(root / "strategies/reserve_drawdown", root / "cases/allocation_cycle.json", simulator)
         assert context.prec == 6
     assert actual.to_json() == expected.to_json()
 
 
-def test_runtime_entrypoint(root, monkeypatch):
+def test_simulator_entrypoint(root, tmp_path, monkeypatch):
     from flowfolio import sdk
-    class Plugin:
-        def load(self): return ReferenceRuntime
-    monkeypatch.setattr(sdk, "entry_points", lambda **kw: [Plugin()] if kw["name"] == "plugin" else [])
-    result = run(root / "strategies/dca", root / "cases/flat.json", "plugin")
-    assert result.metrics["final_value"] == 300
-    with pytest.raises(ValueError): sdk.runtime_by_name("missing")
+    metadata = tmp_path / "flowfolio_test_plugin-0.1.dist-info"
+    metadata.mkdir()
+    (metadata / "entry_points.txt").write_text(
+        "[flowfolio.simulators]\nentrypoint-reference = flowfolio.simulators.reference:ReferenceSimulator\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    result = run(root / "strategies/dca", root / "cases/flat.json", "entrypoint-reference")
+    metrics = evaluate(result, EvaluationSpec()).metrics
+    assert metrics["final_value"] == 300
+    with pytest.raises(ValueError, match="unknown or ambiguous simulator"):
+        sdk.load_simulator("missing")

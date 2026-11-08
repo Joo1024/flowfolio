@@ -1,57 +1,47 @@
+"""Resolve inputs and execute a fresh Run."""
+from importlib import import_module
 from importlib.metadata import entry_points
-import platform
-from decimal import Context as DecimalContext, localcontext, ROUND_HALF_EVEN
-from .model import RunResult, VERSION, PROTOCOL, plain
-from .package import StrategyPackage, ExperimentCase
-from .semantics import compatibility
-from .execution import Session
+from importlib.util import find_spec
+from inspect import isabstract, isclass
+
+from .model import Scenario
+from .package import StrategyPackage
+from .run import Run
+from .simulators import Simulator
 
 
-def runtime_by_name(name):
-    if name == "reference":
-        from .runtimes.reference import ReferenceRuntime
-        return ReferenceRuntime()
-    if name == "backtrader":
-        from .runtimes.backtrader import BacktraderRuntime
-        return BacktraderRuntime()
-    matches = list(entry_points(group="flowfolio.runtimes", name=name))
+def load_simulator(name):
+    module_name = f"{__package__}.simulators.{name}"
+    if name.isidentifier() and find_spec(module_name) is not None:
+        try:
+            module = import_module(module_name)
+            implementations = {
+                cls for cls in vars(module).values()
+                if isclass(cls) and cls.__module__ == module.__name__
+                and cls is not Simulator and issubclass(cls, Simulator) and not isabstract(cls)
+            }
+            if len(implementations) != 1:
+                raise ValueError(
+                    f"{module_name} must define exactly one concrete Simulator subclass; "
+                    f"found {len(implementations)}"
+                )
+            simulator_class, = implementations
+            return simulator_class()
+        except ImportError as error:
+            raise ValueError(f"cannot load simulator {name!r} from {module_name}: {error}") from error
+
+    matches = list(entry_points(group="flowfolio.simulators", name=name))
     if len(matches) != 1:
-        raise ValueError(f"unknown or ambiguous runtime: {name}")
-    return matches[0].load()()
+        raise ValueError(f"unknown or ambiguous simulator: {name}")
+    try:
+        return matches[0].load()()
+    except ImportError as error:
+        raise ValueError(f"cannot load simulator plugin {name!r}: {error}") from error
 
 
-def run(strategy, case, runtime="reference", parameters=None):
-    # Host applications may change their Decimal context; protocol arithmetic
-    # must remain reproducible and must restore the caller's context afterward.
-    with localcontext(DecimalContext(prec=40, rounding=ROUND_HALF_EVEN)):
-        return _run(strategy, case, runtime, parameters)
-
-
-def _run(strategy, case, runtime, parameters):
+def run(strategy, scenario, simulator="reference", parameters=None):
     package = strategy if isinstance(strategy, StrategyPackage) else StrategyPackage.load(strategy)
-    case = case if isinstance(case, ExperimentCase) else ExperimentCase.load(case)
-    backend = runtime_by_name(runtime) if isinstance(runtime, str) else runtime
-    parameters = package.parameters(parameters or {})
-    reasons = compatibility(package, case, backend)
-    if hasattr(backend, "availability"):
-        reasons += backend.availability()
-    result = RunResult(manifest={"status": "unsupported" if reasons else "completed",
-        "framework_version": VERSION, "protocol": PROTOCOL, "python": platform.python_version(),
-        "runtime": {"name": backend.name, "version": backend.version}, "engine": backend.engine,
-        "strategy": {"name": package.metadata["name"], "version": package.metadata["version"], "sha256": package.fingerprint},
-        "case": {"name": case.data["name"], "sha256": case.fingerprint},
-        "parameters": plain(parameters), "execution": plain(case.data["execution"]),
-        "currency": case.data["currency"], "fees": plain(case.fees),
-        "capabilities": sorted(backend.capabilities)})
-    if reasons:
-        result.diagnostics.extend({"layer": "compatibility", "code": "unsupported", "message": r} for r in reasons)
-        return result
-    session = Session(package, case, parameters, result)
-    backend.execute(session)
-    session.finish()
-    from .verify import verify
-    findings = verify(result, case)
-    result.diagnostics.extend(findings)
-    if result.diagnostics:
-        result.manifest["status"] = "invalid"
-    return result
+    scenario = scenario if isinstance(scenario, Scenario) else Scenario.load(scenario)
+    if isinstance(simulator, str):
+        simulator = load_simulator(simulator)
+    return Run(scenario, package, parameters or {}, simulator).execute()

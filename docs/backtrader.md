@@ -11,9 +11,13 @@ GPLv3+ 与本项目选择的 GPL-3.0-or-later 相容。它的发布节奏较慢�
 
 ## 原生执行路径
 
+`flowfolio.simulators.backtrader.BacktraderSimulator` 通过 `flowfolio.adapters.backtrader`
+将场景行情、账户和费用送入引擎。每笔外部现金流在决策前通过原生现金接口入账，
+实际成交通过 `Fill` 回报。
+
 `Cerebro → Bridge.next_open → Strategy.buy/sell → BackBroker → OrderExecutionBit → Bridge.notify_order`。
 收盘现金、仓位和权益读取原生 broker。原生 `_execute`、Position.update 和账本更新
-未被重写；reference runtime 从未被导入。CommissionInfo 负责协议费用报价和货币
+未被重写；reference simulator 从未被导入。CommissionInfo 负责协议费用报价和货币
 运算边界。原生引擎可能多次询价；报价无副作用，只有原生成交会扣费用。
 
 现金、每笔外部入金和订单数量使用与浮点常量互操作的 Decimal 标量；入金不能先转

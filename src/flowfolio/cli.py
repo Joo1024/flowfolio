@@ -1,13 +1,11 @@
 """Small standard-library CLI. Diagnostics are data, never silent fallbacks."""
 import argparse
-from dataclasses import fields
-import json
 from pathlib import Path
 import sys
-from .model import RunResult, canonical, VERSION
-from .package import StrategyPackage, ExperimentCase
-from .sdk import run, runtime_by_name
-from .semantics import compatibility, CAPABILITIES, RESERVED
+from .model import RunResult, Scenario, canonical, VERSION
+from .package import StrategyPackage
+from .sdk import load_simulator, run
+from .protocol import compatibility, RESERVED
 from .verify import compare, verify
 
 
@@ -29,17 +27,17 @@ def parser():
     for name in ("run", "check", "compare"):
         command = sub.add_parser(name)
         command.add_argument("--strategy", required=True, type=Path)
-        command.add_argument("--case", required=True, type=Path)
+        command.add_argument("--scenario", required=True, type=Path)
         command.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
         if name == "compare":
-            command.add_argument("--runtimes", nargs=2, default=["reference", "backtrader"])
+            command.add_argument("--simulators", nargs=2, default=["reference", "backtrader"])
         else:
-            command.add_argument("--runtime", default="reference")
+            command.add_argument("--simulator", default="reference")
         if name != "check":
             command.add_argument("--output", type=Path, help="new output directory (never overwrite)")
     command = sub.add_parser("verify", help="independently verify a saved ledger")
     command.add_argument("--result", required=True, type=Path)
-    command.add_argument("--case", required=True, type=Path)
+    command.add_argument("--scenario", required=True, type=Path)
     return p
 
 
@@ -47,29 +45,29 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         if args.command == "capabilities":
-            print(canonical({"reference": sorted(CAPABILITIES), "backtrader": sorted(CAPABILITIES), "unsupported": sorted(RESERVED)}))
+            capabilities = {name: sorted(load_simulator(name).capabilities)
+                            for name in ("reference", "backtrader")}
+            print(canonical({**capabilities, "unsupported": sorted(RESERVED)}))
             return 0
-        case = ExperimentCase.load(args.case)
+        scenario = Scenario.load(args.scenario)
         if args.command == "verify":
-            result = RunResult(**{f.name: json.loads((args.result / f"{f.name}.json").read_text(encoding="utf-8")) for f in fields(RunResult)})
-            findings = verify(result, case)
+            result = RunResult.load(args.result)
+            findings = verify(result, scenario)
             print(canonical({"valid": not findings, "diagnostics": findings}))
             return 1 if findings else 0
         package = StrategyPackage.load(args.strategy)
         params = parameters(args.param)
         if args.command == "check":
             package.parameters(params)
-            backend = runtime_by_name(args.runtime)
-            reasons = compatibility(package, case, backend)
-            if hasattr(backend, "availability"):
-                reasons += backend.availability()
+            simulator = load_simulator(args.simulator)
+            reasons = compatibility(package, scenario, simulator)
             print(canonical({"status": "unsupported" if reasons else "compatible", "reasons": reasons}))
             return 2 if reasons else 0
         if args.command == "compare":
-            a, b = [run(package, case, runtime, params) for runtime in args.runtimes]
+            a, b = [run(package, scenario, simulator, params) for simulator in args.simulators]
             differences = compare(a, b)
             completed = all(x.manifest["status"] == "completed" for x in (a, b))
-            report = {"conformant": completed and not differences, "runtimes": args.runtimes,
+            report = {"conformant": completed and not differences, "simulators": args.simulators,
                       "statuses": [a.manifest["status"], b.manifest["status"]], "differences": differences}
             if args.output:
                 args.output.mkdir(parents=True, exist_ok=False)
@@ -78,10 +76,11 @@ def main(argv=None):
                 (args.output / "comparison.json").write_text(canonical(report) + "\n", encoding="utf-8")
             print(canonical(report))
             return 0 if report["conformant"] else 1
-        result = run(package, case, args.runtime, params)
+        result = run(package, scenario, args.simulator, params)
         if args.output:
             result.write(args.output)
-            print(canonical({"status": result.manifest["status"], "output": str(args.output), "metrics": result.metrics, "diagnostics": result.diagnostics}))
+            print(canonical({"status": result.manifest["status"], "output": str(args.output),
+                             "diagnostics": result.diagnostics}))
         else:
             print(result.to_json(), end="")
         return {"completed": 0, "unsupported": 2, "invalid": 1}[result.manifest["status"]]

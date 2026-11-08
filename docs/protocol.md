@@ -1,15 +1,30 @@
 # Flowfolio protocol 1.0
 
-StrategyPackage × ExperimentCase × CompatibleRuntime → RunResult.
+StrategyPackage × Scenario × Simulator → Run → RunResult.
 本协议只研究持续投入条件下的长期资产配置。策略不接触引擎对象。
+
+## 模型与协议
+
+- `model.Scenario` 是执行输入，包含初始账户、行情、外部现金流、费用和执行配置。
+  `Scenario.load(path)` 和 `Scenario.from_dict(data)` 读取协议 1.0 输入，验证预期由 verifier 使用。
+- `Run` 绑定场景、带生效参数的策略和执行器，持有运行进度、预算、记忆、待处理订单和反馈。
+  每次调用 SDK 都创建独立的 Run，完成后在 `RunResult` 中交付身份信息和流水。
+- `StrategyContext` 提供只读的 `AccountState`（现金、持仓与预算）、可见行情、
+  入金、上期反馈和策略记忆。`StrategyDecision` 返回有序的订单或预算转移动作和新的记忆。
+- 订单成交由执行器报告实际的 `Fill`。模拟协议按原意图编号生成对应的处理结果，
+  包含成交或拒绝详情，并按意图顺序反馈。策略仍可按字典键读取反馈。
+- `protocol` 定义和校验事件顺序、信息可见性、成交和反馈规则。
+  它也判定预算转移、订单标的和预算是否合法，`Run` 按判定更新预算和订单预留。
+  执行器通过 `execute(run)` 取得订单并提交原生成交和估值，由执行器维护现金和持仓。
 
 ## 包与案例
 
 策略目录包含 `strategy.json`、`strategy.py`、`README.md` 和 `tests/`。
 元数据声明协议、名称、版本、入口类、能力要求、参数类型/默认值/边界。
-入口实现 `decide(context) -> Decision`；每次运行新建实例。
+入口实现 `decide(context) -> StrategyDecision`，每次运行新建实例。
 案例是独立 JSON，包含同步的固定市场价格、正向外部现金流、初始账户、
-费用、执行假设、能力要求和独立于收益好坏的评价要求。
+费用、执行假设、能力要求，以及可选的验证预期 `evaluation.expected_metrics`。
+verifier 可用此字段断言手算指标。场景指纹只由模拟输入决定，修改验证预期后仍可复用原轨迹。
 所有财务输入使用十进制字符串；结果也以十进制字符串编码。
 
 ## 时间与成交
@@ -50,23 +65,29 @@ StrategyPackage × ExperimentCase × CompatibleRuntime → RunResult.
 状态、拒绝原因、未使用预算；同日同标的订单绝不合并。
 TransferIntent 只转移现金预算标签，不是外部投入，不改变账户总值。
 
-Context、历史、持仓、预算、反馈与状态是递归只读快照。历史对象仅持有
+StrategyContext、历史、持仓、预算、反馈与状态是递归只读快照。历史对象仅持有
 已公开的前缀，没有未来数据引用。策略返回新的状态，由框架保存。
 这是受信任的 Python 插件接口，不是恶意代码的沙箱；不可信包须外部隔离。
 
 ## 能力与结果
 
-运行前检查协议、执行配置、自动推导的要求和显式要求；不认识或不支持的
-能力返回 `unsupported` 及逐项原因，不加载策略代码、不进行交易。
+运行前检查协议和执行器是否都支持场景与策略所需的能力。预检失败时，
+在加载策略代码前返回 `unsupported` 及逐项原因。
 `withdrawals`、`multi_currency`、`volume_partial` 等预留能力首版拒绝。
 
-结果包括 manifest、cashflows、intents、fills、transfers、valuations、
-metrics、diagnostics。manifest 固定记录框架/协议/后端/引擎/Python 版本、
-策略包与案例 SHA256、有效参数、执行语义和能力，不含随机 ID 或墙上时间。
+结果包括 manifest、cashflows、decisions、intents、fills、transfers、valuations 和 diagnostics。
+每个执行日有一条决策记录，包含 `date`、更新后的 `state` 和有序 `intent_ids`。
+只更新记忆或空决策的 `intent_ids` 为空。verifier 核对决策日期和动作顺序。
+manifest 使用 `scenario` 和 `simulator` 记录场景和执行器，并记录框架、协议、引擎和
+Python 版本、策略包与场景 SHA256、有效参数、执行语义和能力。
 同一输入与版本产生相同规范 JSON。输出目录拒绝覆盖已有文件。
 包加载使用参与哈希的源码字节快照，直接编译执行，不使用 pyc 缓存。
 
 ## 收益和验证
+
+`evaluate(result, spec, baseline=...)` 从已完成的轨迹计算选定指标。
+`EvaluationSpec` 声明指标及期初入金口径，`EvaluationResult` 保存计算结果。
+基准与待评轨迹须使用同一场景、币种、估值日期和外部现金流。差值按待评值减基准值计算。
 
 设上期收盘值 Vprev，本期初外部投入 C，本期收盘值 V：
 `r = V / (Vprev + C) - 1`。初期投入位于本期收益计算起点；
@@ -74,7 +95,7 @@ metrics、diagnostics。manifest 固定记录框架/协议/后端/引擎/Python 
 最大回撤从该单位化财富序列（含初始1）计算。利润 = 终值−初值−累计投入。
 不把新增本金算成收益。不声明 IRR、年化收益或 Sharpe。
 
-符合性比较按时序、意图、成交、费用、预算、现金、仓位、估值和指标逐层
+符合性比较按时序、决策、意图、成交、费用、预算、现金、仓位和估值逐层
 输出具体路径差异；货币/股数固定绝对容差 1e-7，收益 1e-10，无相对容差。
 费用、日期、状态、原因和规则必须完全相同。不删除不同明细或扩大容差。
 独立 verifier 按流水重建现金/仓位、检查预算总和、费用、收益和案例预期。

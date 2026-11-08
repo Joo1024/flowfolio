@@ -1,4 +1,4 @@
-from flowfolio import Decision, OrderIntent, TransferIntent, D
+from flowfolio import StrategyDecision, OrderIntent, TransferIntent, D
 
 
 class Strategy:
@@ -13,10 +13,10 @@ class Strategy:
         state = {"peak": peak, "month": month,
                  "deployment_month": context.state.get("deployment_month")}
         if context.state.get("month") == month and context.contribution == 0:
-            return Decision(state=state)
-        invest = context.budgets["invest"]
+            return StrategyDecision(state=state)
+        invest = context.account.budgets["invest"]
         saving = invest * self.p["reserve_fraction"]
-        reserve = context.budgets["reserve"] + saving
+        reserve = context.account.budgets["reserve"] + saving
         actions = []
         if saving > 0:
             actions.append(TransferIntent("invest", "reserve", saving, "Build cash reserve", "reserve.save"))
@@ -28,4 +28,4 @@ class Strategy:
                 actions.append(TransferIntent("reserve", "invest", deployment, "Release reserve after drawdown", "reserve.release"))
                 actions.append(OrderIntent(symbol, "buy", deployment, "Observed drawdown purchase", "reserve.drawdown"))
                 state["deployment_month"] = month
-        return Decision(tuple(actions), state)
+        return StrategyDecision(tuple(actions), state)

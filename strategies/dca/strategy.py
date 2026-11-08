@@ -1,4 +1,4 @@
-from flowfolio import Decision, OrderIntent
+from flowfolio import StrategyDecision, OrderIntent
 
 
 class Strategy:
@@ -8,7 +8,7 @@ class Strategy:
     def decide(self, context):
         month = context.date[:7]
         if context.state.get("month") == month and context.contribution == 0:
-            return Decision(state=context.state)
-        budget = context.budgets["invest"]
+            return StrategyDecision(state=context.state)
+        budget = context.account.budgets["invest"]
         orders = (OrderIntent(self.symbol, "buy", budget, "Monthly cash investment", "dca.monthly"),) if budget > 0 else ()
-        return Decision(orders, {"month": month})
+        return StrategyDecision(orders, {"month": month})

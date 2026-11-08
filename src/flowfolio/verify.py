@@ -1,12 +1,13 @@
-"""Independent ledger reconstruction and cross-runtime diagnostics."""
+"""Independent ledger reconstruction and cross-simulator diagnostics."""
 from decimal import InvalidOperation, ROUND_FLOOR, Context as DecimalContext, localcontext
+from .evaluation import EvaluationSpec, evaluate
 from .model import D, ZERO, LOT, TOLERANCE, RETURN_TOLERANCE, plain
 
 
-def verify(result, case):
+def verify(result, scenario):
     with localcontext(DecimalContext(prec=40)):
         try:
-            return _verify(result, case)
+            return _verify(result, scenario)
         except (KeyError, TypeError, ValueError, ArithmeticError) as error:
             return [{"layer": "schema", "path": "result", "message": f"{type(error).__name__}: {error}"}]
 
@@ -52,11 +53,14 @@ def _intent_error(intent, available, sellable, prices, fees, policy):
     return None
 
 
-def _verify(result, case):
+def _verify(result, scenario):
     r = plain(result)
     findings = []
-    if r["manifest"]["case"]["sha256"] != case.fingerprint:
-        findings.append({"layer": "inputs", "path": "manifest.case.sha256", "message": "case hash mismatch"})
+    simulator = r["manifest"]["simulator"]
+    if not all(isinstance(simulator[field], str) and simulator[field] for field in ("name", "version")):
+        raise ValueError("manifest.simulator requires a name and version")
+    if r["manifest"]["scenario"]["sha256"] != scenario.fingerprint:
+        findings.append({"layer": "inputs", "path": "manifest.scenario.sha256", "message": "scenario hash mismatch"})
 
     def check(path, actual, expected, tolerance=TOLERANCE, layer="accounting"):
         if abs(D(actual) - D(expected)) > tolerance:
@@ -64,44 +68,55 @@ def _verify(result, case):
 
     if r["manifest"]["status"] != "completed":
         return [{"layer": "compatibility", "path": "manifest.status", "actual": r["manifest"]["status"], "expected": "completed"}]
-    for key, expected in (("execution", plain(case.data["execution"])),
-                          ("currency", case.data["currency"]), ("fees", plain(case.fees))):
+    for key, expected in (("execution", plain(scenario.execution)),
+                          ("currency", scenario.currency), ("fees", plain(scenario.fees))):
         if r["manifest"][key] != expected:
-            findings.append({"layer": "inputs", "path": "manifest." + key, "message": "manifest disagrees with the case"})
-    cash = D(case.data["initial_cash"])
-    holdings = {s: D(case.data["initial_positions"].get(s, "0")) for s in case.bars[0].close}
-    budgets = {"invest": cash, "reserve": ZERO}
-    initial = cash + sum((holdings[s] * case.bars[0].close[s] for s in holdings), ZERO)
-    previous, wealth, peak, drawdown, total_fees, contributions = initial, D(1), D(1), ZERO, ZERO, ZERO
+            findings.append({"layer": "inputs", "path": "manifest." + key, "message": "manifest disagrees with the scenario"})
+    cash = scenario.initial_account.cash
+    holdings = {s: scenario.initial_account.positions.get(s, ZERO) for s in scenario.bars[0].close}
+    budgets = dict(scenario.initial_account.budgets)
     fill_map = {f["intent_id"]: f for f in r["fills"]}
     transfer_map = {f["intent_id"]: f for f in r["transfers"]}
+    intents_by_date = {bar.date: [] for bar in scenario.bars[1:]}
+    for intent in r["intents"]:
+        if intent["date"] in intents_by_date:
+            intents_by_date[intent["date"]].append(intent)
+    if [decision["date"] for decision in r["decisions"]] != list(intents_by_date):
+        findings.append({"layer": "timing", "path": "decisions", "message": "decision dates do not match execution dates"})
+    for index, decision in enumerate(r["decisions"]):
+        expected_ids = [intent["intent_id"] for intent in intents_by_date.get(decision["date"], ())]
+        if decision["intent_ids"] != expected_ids:
+            findings.append({"layer": "timing", "path": f"decisions[{index}].intent_ids",
+                             "message": "decision does not match its ordered intents"})
+        if not isinstance(decision["state"], dict):
+            findings.append({"layer": "schema", "path": f"decisions[{index}].state",
+                             "message": "decision state must be an object"})
     for section in ("intents", "fills", "transfers"):
         ids = [x["intent_id"] for x in r[section]]
         if len(ids) != len(set(ids)):
             findings.append({"layer": "execution", "path": section, "message": "duplicate intent_id"})
-        if any(x["date"] not in {b.date for b in case.bars[1:]} for x in r[section]):
+        if any(x["date"] not in intents_by_date for x in r[section]):
             findings.append({"layer": "timing", "path": section, "message": "action outside execution dates"})
     if set(fill_map) | set(transfer_map) != {x["intent_id"] for x in r["intents"]} or set(fill_map) & set(transfer_map):
         findings.append({"layer": "execution", "path": "feedback", "message": "feedback/intent identity mismatch"})
-    expected_flows = [{"date": f["date"], "amount": D(f["amount"]), "currency": case.data["currency"]}
-                      for f in sorted(case.data["cashflows"], key=lambda x: x["date"]) if D(f["amount"])]
+    expected_flows = [{"date": flow.date, "amount": flow.amount, "currency": scenario.currency}
+                      for flow in sorted(scenario.cashflows, key=lambda x: x.date) if flow.amount]
     if len(r["cashflows"]) != len(expected_flows):
         findings.append({"layer": "timing", "path": "cashflows", "message": "cashflow count mismatch"})
     for actual, expected in zip(r["cashflows"], expected_flows):
         if actual["date"] != expected["date"] or actual["currency"] != expected["currency"]:
             findings.append({"layer": "timing", "path": "cashflows", "message": "cashflow date/currency mismatch"})
         check("cashflows.amount", actual["amount"], expected["amount"], ZERO)
-    if len(r["valuations"]) != len(case.bars):
+    if len(r["valuations"]) != len(scenario.bars):
         findings.append({"layer": "timing", "path": "valuations", "message": "valuation count mismatch"})
-    for index, (bar, value) in enumerate(zip(case.bars, r["valuations"])):
+    for index, (bar, value) in enumerate(zip(scenario.bars, r["valuations"])):
         if value["date"] != bar.date:
             findings.append({"layer": "timing", "path": f"valuations[{index}].date", "actual": value["date"], "expected": bar.date})
         flow = sum((D(x["amount"]) for x in expected_flows if x["date"] == bar.date), ZERO)
-        contributions += flow
         cash += flow
         budgets["invest"] += flow
         available, sellable = dict(budgets), dict(holdings)
-        for intent in (x for x in r["intents"] if x["date"] == bar.date):
+        for intent in intents_by_date.get(bar.date, ()):
             key = intent["intent_id"]
             if intent["kind"] not in {"order", "transfer"}:
                 findings.append({"layer": "execution", "path": key + ".kind", "message": "unknown intent kind"})
@@ -121,8 +136,8 @@ def _verify(result, case):
             if len(findings) != before_binding:
                 # Never interpret mismatched feedback as a different trade.
                 continue
-            error = _intent_error(intent, available, sellable, bar.open, case.fees,
-                                  case.data["execution"]["insufficient_cash"])
+            error = _intent_error(intent, available, sellable, bar.open, scenario.fees,
+                                  scenario.execution["insufficient_cash"])
             if intent["kind"] == "transfer":
                 expected_status = "rejected" if error else "transferred"
                 if f["status"] != expected_status or f["rejection"] != error:
@@ -157,14 +172,14 @@ def _verify(result, case):
             price = bar.open[symbol]
             check(key + ".price", f["price"], price, ZERO, "execution")
             check(key + ".notional", notional, quantity * price, ZERO, "execution")
-            check(key + ".fee", fee, case.fees.calculate(quantity, price), ZERO, "execution")
+            check(key + ".fee", fee, scenario.fees.calculate(quantity, price), ZERO, "execution")
             if quantity <= 0 or quantity % LOT != 0:
                 findings.append({"layer": "execution", "path": key, "message": "invalid fill lot"})
             if side == "buy":
                 limit = min(D(intent["amount"]), available[budget])
                 if quantity * price + fee > limit:
                     findings.append({"layer": "execution", "path": key, "message": "fill exceeds unreserved budget"})
-                if (quantity + LOT) * price + case.fees.calculate(quantity + LOT, price) <= limit:
+                if (quantity + LOT) * price + scenario.fees.calculate(quantity + LOT, price) <= limit:
                     findings.append({"layer": "execution", "path": key, "message": "buy did not execute maximum affordable lot"})
                 expected_status = "partial" if D(intent["amount"]) > available[budget] else "filled"
                 available[budget] -= quantity * price + fee
@@ -188,18 +203,9 @@ def _verify(result, case):
             holdings[symbol] += signed
             cash += delta
             budgets[budget] += delta
-            total_fees += fee
         equity = cash + sum((holdings[s] * bar.close[s] for s in holdings), ZERO)
-        denominator = previous + flow
-        ret = equity / denominator - 1 if index and denominator else ZERO
-        if index:
-            wealth *= 1 + ret
-            peak = max(peak, wealth)
-            drawdown = max(drawdown, 1 - wealth / peak)
-        previous = equity
-        for field, expected in (("cash", cash), ("equity", equity), ("external_flow", flow), ("unit_wealth", wealth), ("return", ret)):
-            check(f"valuations[{index}].{field}", value[field], expected,
-                  RETURN_TOLERANCE if field in {"unit_wealth", "return"} else TOLERANCE)
+        for field, expected in (("cash", cash), ("equity", equity), ("external_flow", flow)):
+            check(f"valuations[{index}].{field}", value[field], expected)
         for section, expected in (("positions", holdings), ("budgets", budgets)):
             if set(value[section]) != set(expected):
                 findings.append({"layer": "accounting", "path": section, "message": "account keys mismatch"})
@@ -208,15 +214,11 @@ def _verify(result, case):
                 if amount < 0:
                     findings.append({"layer": "accounting", "path": section + "." + key, "message": "negative balance"})
         check(f"valuations[{index}].budget_sum", sum((D(x) for x in value["budgets"].values()), ZERO), value["cash"])
-    expected_metrics = {"final_value": previous, "contributions": contributions,
-                        "profit": previous - initial - contributions, "total_fees": total_fees,
-                        "time_weighted_return": wealth - 1, "max_drawdown": drawdown}
-    for key, value in expected_metrics.items():
-        check("metrics." + key, r["metrics"][key], value,
-              RETURN_TOLERANCE if key in {"time_weighted_return", "max_drawdown"} else TOLERANCE, "metrics")
-    for key, value in case.data.get("evaluation", {}).get("expected_metrics", {}).items():
-        check("evaluation." + key, r["metrics"][key], value,
-              RETURN_TOLERANCE if key in {"time_weighted_return", "max_drawdown"} else TOLERANCE, "evaluation")
+    if not findings and scenario.expected_metrics:
+        evaluation = evaluate(result, EvaluationSpec(tuple(scenario.expected_metrics)))
+        for key, value in scenario.expected_metrics.items():
+            check("evaluation." + key, evaluation.metrics[key], value,
+                  RETURN_TOLERANCE if key in {"time_weighted_return", "max_drawdown"} else TOLERANCE, "evaluation")
     return findings
 
 
@@ -236,12 +238,11 @@ def compare(left, right):
                 walk(xx, yy, f"{path}[{index}]", layer)
         elif x != y:
             tolerance = ZERO if path.endswith((".fee", ".price")) else TOLERANCE
-            if path.endswith((".return", ".unit_wealth", ".time_weighted_return", ".max_drawdown")):
-                tolerance = RETURN_TOLERANCE
             numeric_fields = {"amount", "requested", "quantity", "price", "notional", "fee", "cash_delta", "residual",
-                              "cash", "equity", "external_flow", "return", "unit_wealth", "final_value", "contributions",
-                              "profit", "total_fees", "time_weighted_return", "max_drawdown"}
-            numeric = not path.startswith("manifest.") and (path.rsplit(".", 1)[-1] in numeric_fields or ".positions." in path or ".budgets." in path)
+                              "cash", "equity", "external_flow"}
+            numeric = not path.startswith(("manifest.", "decisions[")) and (
+                path.rsplit(".", 1)[-1] in numeric_fields or ".positions." in path or ".budgets." in path
+            )
             try:
                 if numeric and x is not None and y is not None and abs(D(x) - D(y)) <= tolerance:
                     return
@@ -249,9 +250,10 @@ def compare(left, right):
                 pass
             differences.append({"layer": layer, "path": path, "left": x, "right": y})
 
-    for key in ("status", "framework_version", "protocol", "strategy", "case", "parameters", "execution", "currency", "fees"):
+    for key in ("status", "framework_version", "protocol", "strategy", "scenario", "parameters", "execution", "currency", "fees"):
         walk(a["manifest"][key], b["manifest"][key], "manifest." + key, "inputs")
-    for section, layer in (("cashflows", "timing"), ("intents", "timing"), ("transfers", "accounting"),
-                            ("fills", "execution"), ("valuations", "accounting"), ("metrics", "metrics"), ("diagnostics", "verification")):
+    for section, layer in (("cashflows", "timing"), ("decisions", "strategy"), ("intents", "timing"),
+                            ("transfers", "accounting"), ("fills", "execution"),
+                            ("valuations", "accounting"), ("diagnostics", "verification")):
         walk(a[section], b[section], section, layer)
     return differences
