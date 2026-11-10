@@ -1,6 +1,6 @@
 """Backtrader adapter: Cerebro clock + native BackBroker execution/accounting.
 
-Shared code supplies order requests and records notifications; ReferenceSimulator
+Shared code supplies order requests and records notifications; ReferenceExecutionEngine
 is never imported or invoked. No trades are replayed from another engine.
 """
 from datetime import datetime

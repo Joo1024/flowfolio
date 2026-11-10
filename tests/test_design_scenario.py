@@ -36,8 +36,8 @@ def design_scenario():
         ("dca", {}, 199, 0, 2388, 1791),
     ],
 )
-def test_design_article_trajectory(root, design_scenario, simulator, strategy, parameters, shares, cash, day_one, day_two):
-    result = run(root / "strategies" / strategy, design_scenario, simulator, parameters)
+def test_design_article_trajectory(root, design_scenario, engine, strategy, parameters, shares, cash, day_one, day_two):
+    result = run(root / "strategies" / strategy, design_scenario, engine, parameters)
 
     assert result.manifest["status"] == "completed", result.diagnostics
     assert [(f["date"], f["quantity"], f["price"], f["fee"]) for f in result.fills] == [

@@ -26,7 +26,7 @@ CAPABILITIES = frozenset({
 RESERVED = frozenset({"multi_currency", "withdrawals", "short_sales", "volume_partial", "slippage", "live_trading"})
 
 
-def compatibility(package, scenario: Scenario, simulator):
+def compatibility(package, scenario: Scenario, engine):
     reasons = []
     if package.metadata["protocol"] != PROTOCOL or scenario.protocol != PROTOCOL:
         reasons.append("protocol: only 1.0 is supported")
@@ -54,10 +54,10 @@ def compatibility(package, scenario: Scenario, simulator):
     if "volume_limit" in ex:
         required.add("volume_partial")
     reasons += [f"capability:{x}: unsupported by protocol {PROTOCOL}" for x in sorted(required - CAPABILITIES)]
-    reasons += [f"capability:{x}: unsupported by {simulator.name}"
-                for x in sorted((required & CAPABILITIES) - simulator.capabilities)]
-    if hasattr(simulator, "availability"):
-        reasons += simulator.availability()
+    reasons += [f"capability:{x}: unsupported by {engine.name}"
+                for x in sorted((required & CAPABILITIES) - engine.capabilities)]
+    if hasattr(engine, "availability"):
+        reasons += engine.availability()
     return reasons
 
 
@@ -140,7 +140,7 @@ def require_next_bar(index, previous, bar_count):
 def require_complete(phase, index, bar_count):
     require_phase(phase, "ready", "complete run")
     if index != bar_count - 1:
-        raise RuntimeError("simulator stopped before the final valuation")
+        raise RuntimeError("engine stopped before the final valuation")
 
 
 def decision_context(scenario, index, account: AccountState, feedback, state, contribution):
@@ -156,7 +156,7 @@ def validate_account(cash, positions, budget_total, equity=None):
     if abs(budget_total - cash) > TOLERANCE:
         raise RuntimeError("budget/native cash reconciliation failed")
     if cash < -TOLERANCE or any(quantity < -TOLERANCE for quantity in positions.values()):
-        raise RuntimeError("native simulator violated long-only cash account")
+        raise RuntimeError("native engine violated long-only cash account")
     if equity is not None and equity > D("1000000000"):
         raise RuntimeError("account value exceeds protocol 1.0 numeric range")
 

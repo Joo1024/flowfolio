@@ -7,13 +7,14 @@ from .model import (
 )
 from .package import StrategyPackage
 from .run import Run
+from .scenario_generation import ScenarioGenerator
 from .sdk import run
-from .simulators import Simulator
+from .engines import ExecutionEngine
 
 __version__ = VERSION
 __all__ = [
     "AccountState", "ActionRequest", "ActionResponse", "CashFlow", "D", "Fill",
-    "FutureDataError", "MarketView", "OrderIntent", "Run", "RunResult", "Scenario",
-    "Simulator", "Strategy", "StrategyContext", "StrategyDecision", "StrategyPackage",
+    "FutureDataError", "MarketView", "OrderIntent", "Run", "RunResult", "Scenario", "ScenarioGenerator",
+    "ExecutionEngine", "Strategy", "StrategyContext", "StrategyDecision", "StrategyPackage",
     "TransferIntent", "EvaluationSpec", "EvaluationResult", "evaluate", "run",
 ]

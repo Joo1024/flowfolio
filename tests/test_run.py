@@ -1,7 +1,7 @@
 import pytest
 
 from flowfolio import Run, RunResult, Scenario, StrategyPackage, run
-from flowfolio.simulators.reference import ReferenceSimulator
+from flowfolio.engines.reference import ReferenceExecutionEngine
 from flowfolio.verify import compare, verify
 
 
@@ -53,7 +53,7 @@ return StrategyDecision((OrderIntent("EQUITY", "buy", c.contribution, "test", "b
 
     monkeypatch.setattr(StrategyPackage, "instantiate", capture_instance)
 
-    class RecordingSimulator(ReferenceSimulator):
+    class RecordingExecutionEngine(ReferenceExecutionEngine):
         def __init__(self):
             self.runs = []
 
@@ -61,10 +61,10 @@ return StrategyDecision((OrderIntent("EQUITY", "buy", c.contribution, "test", "b
             self.runs.append(run)
             super().execute(run)
 
-    simulator = RecordingSimulator()
-    first = run(strategy, scenario, simulator)
-    second = run(strategy, scenario, simulator)
-    first_run, second_run = simulator.runs
+    engine = RecordingExecutionEngine()
+    first = run(strategy, scenario, engine)
+    second = run(strategy, scenario, engine)
+    first_run, second_run = engine.runs
     first_strategy, second_strategy = instances
     assert isinstance(first_run, Run) and isinstance(second_run, Run)
     assert first_run is not second_run
@@ -79,8 +79,8 @@ return StrategyDecision((OrderIntent("EQUITY", "buy", c.contribution, "test", "b
 
 
 @pytest.mark.parametrize("event", ["before_initial", "skip_bar", "no_feedback", "stop_early"])
-def test_run_rejects_invalid_simulator_event_order(root, flat_data, event):
-    class BrokenSimulator(ReferenceSimulator):
+def test_run_rejects_invalid_engine_event_order(root, flat_data, event):
+    class BrokenExecutionEngine(ReferenceExecutionEngine):
         def execute(self, run):
             if event == "before_initial":
                 run.open(1, 0, {})
@@ -100,4 +100,4 @@ def test_run_rejects_invalid_simulator_event_order(root, flat_data, event):
     }
     scenario = Scenario.from_dict(flat_data)
     with pytest.raises(RuntimeError, match=errors[event]):
-        run(root / "strategies/dca", scenario, BrokenSimulator())
+        run(root / "strategies/dca", scenario, BrokenExecutionEngine())

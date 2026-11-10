@@ -6,7 +6,7 @@
 执行。实验案例独立固定市场数据、投入、初始账户、费用和执行假设。
 
 ```text
-StrategyPackage × Scenario × Simulator → Run → RunResult
+StrategyPackage × Scenario × ExecutionEngine → Run → RunResult
 ```
 
 首版聚焦定投、现金储备、回撤加仓和再平衡；不是通用量化交易平台。
@@ -24,10 +24,10 @@ pip install --no-cache-dir '.[backtrader]'
 
 flowfolio check --strategy strategies/dca --scenario cases/hand_fees.json
 flowfolio run --strategy strategies/dca --scenario cases/hand_fees.json \
-  --simulator reference --output ../flowfolio-work/dca-reference
+  --engine reference --output ../flowfolio-work/dca-reference
 flowfolio compare --strategy strategies/threshold_rebalance \
   --scenario cases/allocation_cycle.json \
-  --simulators reference backtrader \
+  --engines reference backtrader \
   --output ../flowfolio-work/rebalance-comparison
 flowfolio verify --result ../flowfolio-work/dca-reference --scenario cases/hand_fees.json
 ```
@@ -59,15 +59,18 @@ scenario = Scenario.load("cases/allocation_cycle.json")
 reference = run("strategies/reserve_drawdown", scenario,
                 parameters={"drawdown": "0.2"})
 backtrader = run("strategies/reserve_drawdown", scenario,
-                 simulator="backtrader", parameters={"drawdown": "0.2"})
+                 engine="backtrader", parameters={"drawdown": "0.2"})
 assert reference.manifest["status"] == backtrader.manifest["status"] == "completed"
 assert compare(reference, backtrader) == []
 ```
 
 策略只接收只读 `StrategyContext`，返回 `StrategyDecision`（有序 `OrderIntent`/
-`TransferIntent` 和新状态）。账户修改由执行器处理。实际成交、费用、
+`TransferIntent` 和新状态）。账户修改由执行引擎处理。实际成交、费用、
 拒绝、剩余预算和动作原因分别记录，并在下一观察点反馈给策略。
-参见 [策略开发指南](docs/strategies.md) 和 [完整 SDK 示例](examples/compare_simulators.py)。
+参见 [策略开发指南](docs/strategies.md) 和 [完整 SDK 示例](examples/compare_engines.py)。
+
+`flowfolio.scenario_generation.ScenarioGenerator` 定义生成场景的接口
+`generate() -> Iterable[Scenario]`。拿到一个 `Scenario` 后，可以直接交给 `run()`。
 
 ## 执行语义与结果
 
@@ -82,7 +85,8 @@ assert compare(reference, backtrader) == []
 
 结果文件包括 `manifest.json`、`cashflows.json`、`decisions.json`、`intents.json`、
 `fills.json`、`transfers.json`、`valuations.json` 和 `diagnostics.json`。
-manifest 通过 `scenario` 和 `simulator` 标识场景和执行器，并记录有效参数、费用及执行语义。
+manifest 的 `scenario` 标识场景，`execution_engine` 记录 Flowfolio 执行引擎的名称和版本，
+`engine` 记录底层实现的名称和版本。manifest 还记录有效参数、费用及执行语义。
 每个决策点记录更新后的策略记忆和有序动作编号。
 
 ## 评价已保存的回测
@@ -113,7 +117,7 @@ print(report.metrics)
 |成交量部分成交、滑点、限价/挂单|unsupported|unsupported|
 
 Backtrader 由 Cerebro 推进时间、原生 Market 订单成交、BackBroker 维护
-现金和持仓；适配器没有调用 reference simulator。使用其费用扩展接口和
+现金和持仓；适配器没有调用 reference engine。使用其费用扩展接口和
 十进制数值边界避免“刚好付得起却被浮点误判拒绝”，不增加现金、不改变容差。
 详见 [完整能力矩阵](docs/capabilities.md)、[采用理由与限制](docs/backtrader.md)
 及 [适配器开发指南](docs/adapters.md)。
@@ -125,7 +129,7 @@ pip install --no-cache-dir '.[dev,backtrader]'
 PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider \
   --basetemp=../flowfolio-work/pytest \
   --junitxml=../flowfolio-work/junit.xml
-python examples/compare_simulators.py
+python examples/compare_engines.py
 python -m build --outdir ../flowfolio-work/dist
 ```
 
@@ -134,7 +138,7 @@ python -m build --outdir ../flowfolio-work/dist
 覆盖未来数据隔离、不可变快照、订单拒绝无副作用、预算守恒、费用舍入、
 超额卖出、多笔成交、复现、原生执行证据和跨后端逐字段比较。
 手算过程见 [手算金标准](docs/hand-calculations.md)。
-本地完整套件 **170 项测试通过**，详见 [验证记录](docs/validation.md)。
+本地完整套件 **171 项测试通过**，详见 [验证记录](docs/validation.md)。
 
 正确性验证不以收益高低为判断标准。研究案例为合成固定数据，不代表投资建议
 或真实市场表现。首版不包含 Web、机器学习、自动优化、实盘、衍生品或集群。

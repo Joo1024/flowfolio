@@ -9,17 +9,17 @@ from .model import (
     ZERO, freeze, plain,
 )
 from .package import StrategyPackage
-from .simulators import Simulator
+from .engines import ExecutionEngine
 from .verify import verify
 
 
 class Run:
-    """One execution of a scenario and a configured strategy on a simulator."""
+    """One execution of a scenario and a configured strategy on an execution engine."""
 
-    def __init__(self, scenario: Scenario, strategy: StrategyPackage, parameters, simulator: Simulator):
+    def __init__(self, scenario: Scenario, strategy: StrategyPackage, parameters, engine: ExecutionEngine):
         self._scenario = scenario
         self._parameters = strategy.parameters(parameters)
-        self._simulator = simulator
+        self._engine = engine
         self._package = strategy
         self._phase = "new"
         self._index = 0
@@ -39,8 +39,8 @@ class Run:
         return self._parameters
 
     @property
-    def simulator(self) -> Simulator:
-        return self._simulator
+    def engine(self) -> ExecutionEngine:
+        return self._engine
 
     def execute(self) -> RunResult:
         """Execute once and return the completed or unsupported result."""
@@ -50,15 +50,15 @@ class Run:
             return self._execute()
 
     def _execute(self):
-        scenario, package, simulator = self.scenario, self._package, self.simulator
-        reasons = protocol.compatibility(package, scenario, simulator)
+        scenario, package, execution_engine = self.scenario, self._package, self.engine
+        reasons = protocol.compatibility(package, scenario, execution_engine)
         self._result = RunResult(manifest={
             "status": "unsupported" if reasons else "completed",
             "framework_version": VERSION,
             "protocol": PROTOCOL,
             "python": python_version(),
-            "simulator": {"name": simulator.name, "version": simulator.version},
-            "engine": plain(simulator.engine),
+            "execution_engine": {"name": execution_engine.name, "version": execution_engine.version},
+            "engine": plain(execution_engine.engine),
             "strategy": {
                 "name": package.metadata["name"],
                 "version": package.metadata["version"],
@@ -69,7 +69,7 @@ class Run:
             "execution": plain(scenario.execution),
             "currency": scenario.currency,
             "fees": plain(scenario.fees),
-            "capabilities": sorted(simulator.capabilities),
+            "capabilities": sorted(execution_engine.capabilities),
         })
         if reasons:
             self._result.diagnostics.extend(
@@ -78,7 +78,7 @@ class Run:
             )
         else:
             self._strategy = package.instantiate(self.parameters)
-            simulator.execute(self)
+            execution_engine.execute(self)
             protocol.require_complete(self._phase, self._index, len(scenario.bars))
             self._result.diagnostics.extend(verify(self._result, scenario))
             if self._result.diagnostics:
@@ -189,12 +189,12 @@ class Run:
         order = protocol.feedback_order(self._phase, self._pending, intent_id)
         self._reject(intent_id, order.intent, "native:" + reason)
         self._result.diagnostics.append({"layer": "execution", "path": intent_id,
-            "message": "native simulator rejected a protocol-affordable order: " + reason})
+            "message": "native engine rejected a protocol-affordable order: " + reason})
 
     def close(self, cash, positions, equity):
         protocol.require_phase(self._phase, "open", "record close valuation")
         if self._pending:
-            raise RuntimeError("simulator left orders without final feedback")
+            raise RuntimeError("engine left orders without final feedback")
         # Reservation feedback may be recorded before native fills: restore intent order.
         self._result.fills.sort(key=lambda x: x["intent_id"])
         self._feedback = tuple(sorted(self._current_feedback, key=lambda x: x["intent_id"]))

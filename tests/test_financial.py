@@ -5,9 +5,9 @@ from flowfolio import D, run, Scenario, EvaluationSpec, evaluate
 from flowfolio.verify import verify, compare
 
 
-def test_flat_contributions_are_not_profit(root, simulator):
+def test_flat_contributions_are_not_profit(root, engine):
     for package in (root / "strategies").iterdir():
-        result = run(package, root / "cases/flat.json", simulator)
+        result = run(package, root / "cases/flat.json", engine)
         assert result.manifest["status"] == "completed"
         metrics = evaluate(result, EvaluationSpec()).metrics
         assert metrics["final_value"] == 300
@@ -15,8 +15,8 @@ def test_flat_contributions_are_not_profit(root, simulator):
         assert metrics["time_weighted_return"] == 0
 
 
-def test_hand_fees(root, simulator):
-    result = run(root / "strategies/dca", root / "cases/hand_fees.json", simulator)
+def test_hand_fees(root, engine):
+    result = run(root / "strategies/dca", root / "cases/hand_fees.json", engine)
     assert [f["quantity"] for f in result.fills] == [D(10), D(5)]
     assert [f["fee"] for f in result.fills] == [D(2), D(2)]
     metrics = evaluate(result, EvaluationSpec()).metrics
@@ -25,10 +25,10 @@ def test_hand_fees(root, simulator):
     assert abs(metrics["max_drawdown"] - D(2)/102) < D("1e-10")
 
 
-def test_individual_same_symbol_fees_and_provenance(make_package, one_period, simulator):
+def test_individual_same_symbol_fees_and_provenance(make_package, one_period, engine):
     one_period["fees"] = {"fixed": "1", "rate": "0.01"}
     pkg = make_package('return StrategyDecision((OrderIntent("EQUITY", "buy", D(50), "first", "a"), OrderIntent("EQUITY", "buy", D(50), "second", "b")))')
-    result = run(pkg, Scenario.from_dict(one_period), simulator)
+    result = run(pkg, Scenario.from_dict(one_period), engine)
     assert result.manifest["status"] == "completed"
     assert len(result.fills) == 2
     assert [f["reason"] for f in result.fills] == ["first", "second"]
@@ -38,9 +38,9 @@ def test_individual_same_symbol_fees_and_provenance(make_package, one_period, si
     assert metrics["total_fees"] == D("2.98")
 
 
-def test_transfers_do_not_change_equity(make_package, one_period, simulator):
+def test_transfers_do_not_change_equity(make_package, one_period, engine):
     pkg = make_package('return StrategyDecision((TransferIntent("invest", "reserve", D(70), "save", "save"), TransferIntent("reserve", "invest", D(20), "release", "release")))')
-    result = run(pkg, Scenario.from_dict(one_period), simulator)
+    result = run(pkg, Scenario.from_dict(one_period), engine)
     assert result.valuations[-1]["equity"] == 100
     assert result.valuations[-1]["budgets"] == {"invest": D(50), "reserve": D(50)}
     metrics = evaluate(result, EvaluationSpec()).metrics
@@ -55,10 +55,10 @@ def test_transfers_do_not_change_equity(make_package, one_period, simulator):
     ('OrderIntent("EQUITY", "short", D(10), "bad", "test")', "invalid_side"),
     ('OrderIntent("EQUITY", "buy", D(101), "bad", "test")', "insufficient_budget"),
 ])
-def test_rejected_order_no_mutation(make_package, one_period, simulator, intent, error):
+def test_rejected_order_no_mutation(make_package, one_period, engine, intent, error):
     one_period["execution"]["insufficient_cash"] = "reject"
     pkg = make_package(f"return StrategyDecision(({intent},))")
-    result = run(pkg, Scenario.from_dict(one_period), simulator)
+    result = run(pkg, Scenario.from_dict(one_period), engine)
     assert result.fills[0]["rejection"] == error
     assert result.valuations[-1]["cash"] == 100
     assert all(q == 0 for q in result.valuations[-1]["positions"].values())
@@ -66,36 +66,36 @@ def test_rejected_order_no_mutation(make_package, one_period, simulator, intent,
     assert metrics["total_fees"] == 0
 
 
-def test_clip_reports_residual_and_partial(make_package, one_period, simulator):
+def test_clip_reports_residual_and_partial(make_package, one_period, engine):
     pkg = make_package('return StrategyDecision((OrderIntent("EQUITY", "buy", D(150), "large", "clip"),))')
-    result = run(pkg, Scenario.from_dict(one_period), simulator)
+    result = run(pkg, Scenario.from_dict(one_period), engine)
     assert result.fills[0]["status"] == "partial"
     assert result.fills[0]["residual"] == 50
     assert result.fills[0]["quantity"] == 10
 
 
-def test_sales_cannot_fund_same_batch_and_cannot_oversell(make_package, one_period, simulator):
+def test_sales_cannot_fund_same_batch_and_cannot_oversell(make_package, one_period, engine):
     one_period["initial_positions"] = {"EQUITY": "10"}
     one_period["cashflows"] = []
     pkg = make_package('return StrategyDecision((OrderIntent("EQUITY", "sell", D(6), "first", "a"), OrderIntent("EQUITY", "sell", D(6), "second", "b"), OrderIntent("BOND", "buy", D(60), "cash", "c")))')
-    result = run(pkg, Scenario.from_dict(one_period), simulator)
+    result = run(pkg, Scenario.from_dict(one_period), engine)
     assert [f["status"] for f in result.fills] == ["filled", "rejected", "rejected"]
     assert result.valuations[-1]["positions"]["EQUITY"] == 4
     assert result.valuations[-1]["cash"] == 60
 
 
-def test_fee_exceeds_sell_proceeds(make_package, one_period, simulator):
+def test_fee_exceeds_sell_proceeds(make_package, one_period, engine):
     one_period["initial_positions"] = {"EQUITY": "1"}
     one_period["fees"]["fixed"] = "11"
     pkg = make_package('return StrategyDecision((OrderIntent("EQUITY", "sell", D(1), "sale", "sell"),))')
-    result = run(pkg, Scenario.from_dict(one_period), simulator)
+    result = run(pkg, Scenario.from_dict(one_period), engine)
     assert result.fills[0]["rejection"] == "fee_exceeds_proceeds"
     assert result.valuations[-1]["positions"]["EQUITY"] == 1
 
 
-def test_budget_reservations_prevent_double_spend(make_package, one_period, simulator):
+def test_budget_reservations_prevent_double_spend(make_package, one_period, engine):
     pkg = make_package('return StrategyDecision((OrderIntent("EQUITY", "buy", D(80), "one", "a"), TransferIntent("invest", "reserve", D(30), "save", "b"), OrderIntent("EQUITY", "buy", D(80), "two", "c")))')
-    result = run(pkg, Scenario.from_dict(one_period), simulator)
+    result = run(pkg, Scenario.from_dict(one_period), engine)
     assert result.transfers[0]["status"] == "rejected"
     assert [f["quantity"] for f in result.fills] == [D(8), D(2)]
     assert result.fills[1]["status"] == "partial"
@@ -145,9 +145,9 @@ def test_numeric_looking_rule_ids_are_compared_exactly(root):
     assert compare(result, altered)[0]["path"] == "fills[0].rule_id"
 
 
-def test_empty_account_without_flows(root, one_period, simulator):
+def test_empty_account_without_flows(root, one_period, engine):
     one_period["cashflows"] = []
-    result = run(root / "strategies/dca", Scenario.from_dict(one_period), simulator)
+    result = run(root / "strategies/dca", Scenario.from_dict(one_period), engine)
     assert result.manifest["status"] == "completed"
     metrics = evaluate(result, EvaluationSpec()).metrics
     assert metrics["final_value"] == 0

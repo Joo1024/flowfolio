@@ -32,7 +32,7 @@ def make_package(tmp_path):
 
 
 @pytest.fixture(params=["reference", "backtrader"])
-def simulator(request):
+def engine(request):
     if request.param == "backtrader":
         pytest.importorskip("backtrader")
     return request.param

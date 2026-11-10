@@ -1,4 +1,4 @@
-"""Simulator interface and built-in implementations."""
+"""Execution engine interface and built-in implementations."""
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
@@ -8,11 +8,13 @@ if TYPE_CHECKING:
     from ..run import Run
 
 
-class Simulator(ABC):
+class ExecutionEngine(ABC):
+    """Advance a run, simulate orders, and maintain the native account."""
+
     name: str
     version: str
     capabilities: frozenset[str]
-    engine: Mapping[str, str]
+    engine: Mapping[str, str]  # Name and version of the underlying implementation.
 
     @abstractmethod
     def execute(self, run: "Run") -> None:

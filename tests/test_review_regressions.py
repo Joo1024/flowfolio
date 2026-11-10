@@ -158,21 +158,21 @@ def test_cashflow_never_loses_decimal_precision(root, one_period, amount):
 
 @pytest.mark.parametrize("strategy", ["dca", "reserve_drawdown", "threshold_rebalance"])
 @pytest.mark.parametrize("initial_cash", ["0", "100"])
-def test_midmonth_flow_is_invested_once(root, one_period, simulator, strategy, initial_cash):
+def test_midmonth_flow_is_invested_once(root, one_period, engine, strategy, initial_cash):
     one_period["initial_cash"] = initial_cash
     for day in ("2024-02-15", "2024-02-16"):
         bar = deepcopy(one_period["bars"][-1])
         bar["date"] = day
         one_period["bars"].append(bar)
     one_period["cashflows"][0]["date"] = "2024-02-15"
-    result = run(root / "strategies" / strategy, Scenario.from_dict(one_period), simulator)
+    result = run(root / "strategies" / strategy, Scenario.from_dict(one_period), engine)
     assert result.manifest["status"] == "completed", result.diagnostics
     assert any(f["date"] == "2024-02-15" and f["status"] == "filled" for f in result.fills)
     assert not any(f["date"] == "2024-02-16" for f in result.fills)
     assert result.valuations[-1]["budgets"]["invest"] == 0
 
 
-def test_reserve_does_not_deploy_twice_in_same_month(root, one_period, simulator):
+def test_reserve_does_not_deploy_twice_in_same_month(root, one_period, engine):
     one_period["initial_cash"] = "100"
     for day in ("2024-03-01", "2024-03-15", "2024-03-16"):
         bar = deepcopy(one_period["bars"][-1])
@@ -181,7 +181,7 @@ def test_reserve_does_not_deploy_twice_in_same_month(root, one_period, simulator
         one_period["bars"].append(bar)
     one_period["bars"][1]["close"]["EQUITY"] = "5"
     one_period["cashflows"] = [{"date": "2024-03-15", "amount": "100"}]
-    result = run(root / "strategies/reserve_drawdown", Scenario.from_dict(one_period), simulator)
+    result = run(root / "strategies/reserve_drawdown", Scenario.from_dict(one_period), engine)
     deployments = [f for f in result.fills if f["rule_id"] == "reserve.drawdown"]
     assert len(deployments) == 1
     assert deployments[0]["date"] == "2024-03-01"

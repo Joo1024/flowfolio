@@ -1,4 +1,4 @@
-"""Independent ledger reconstruction and cross-simulator diagnostics."""
+"""Independent ledger reconstruction and cross-engine diagnostics."""
 from decimal import InvalidOperation, ROUND_FLOOR, Context as DecimalContext, localcontext
 from .evaluation import EvaluationSpec, evaluate
 from .model import D, ZERO, LOT, TOLERANCE, RETURN_TOLERANCE, plain
@@ -53,12 +53,17 @@ def _intent_error(intent, available, sellable, prices, fees, policy):
     return None
 
 
+def _validate_execution_engine(manifest):
+    execution_engine = manifest["execution_engine"]
+    if not all(isinstance(execution_engine[field], str) and execution_engine[field]
+               for field in ("name", "version")):
+        raise ValueError("manifest.execution_engine requires a name and version")
+
+
 def _verify(result, scenario):
     r = plain(result)
     findings = []
-    simulator = r["manifest"]["simulator"]
-    if not all(isinstance(simulator[field], str) and simulator[field] for field in ("name", "version")):
-        raise ValueError("manifest.simulator requires a name and version")
+    _validate_execution_engine(r["manifest"])
     if r["manifest"]["scenario"]["sha256"] != scenario.fingerprint:
         findings.append({"layer": "inputs", "path": "manifest.scenario.sha256", "message": "scenario hash mismatch"})
 
@@ -223,8 +228,10 @@ def _verify(result, scenario):
 
 
 def compare(left, right):
-    """Fixed tolerances; report every differing path, including raw ledger rows."""
+    """Compare run inputs and ledgers across execution engines."""
     a, b = plain(left), plain(right)
+    _validate_execution_engine(a["manifest"])
+    _validate_execution_engine(b["manifest"])
     differences = []
 
     def walk(x, y, path, layer):

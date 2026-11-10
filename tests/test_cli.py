@@ -14,8 +14,9 @@ def test_cli_run_compare_verify(root, tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["status"] == "completed"
     manifest = json.loads((output / "manifest.json").read_text())
     assert manifest["scenario"]["name"] == "hand_fees"
-    assert manifest["simulator"]["name"] == "reference"
-    assert {"case", "runtime"}.isdisjoint(manifest)
+    assert manifest["execution_engine"]["name"] == "reference"
+    assert manifest["execution_engine"]["version"] == manifest["framework_version"]
+    assert manifest["engine"] == {"name": "flowfolio-decimal", "version": manifest["framework_version"]}
     assert (output / "decisions.json").is_file()
     assert not (output / "metrics.json").exists()
     assert main(["verify", "--result", str(output), "--scenario", case]) == 0
@@ -29,10 +30,10 @@ def test_cli_compare(root, tmp_path, capsys):
     output = tmp_path / "comparison"
     assert main(["compare", "--strategy", str(root / "strategies/threshold_rebalance"),
                  "--scenario", str(root / "cases/allocation_cycle.json"),
-                 "--simulators", "reference", "backtrader", "--output", str(output)]) == 0
+                 "--engines", "reference", "backtrader", "--output", str(output)]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["conformant"]
-    assert report["simulators"] == ["reference", "backtrader"]
+    assert report["engines"] == ["reference", "backtrader"]
     assert (output / "left/fills.json").is_file() and (output / "right/fills.json").is_file()
 
 
@@ -51,7 +52,7 @@ def test_cli_capabilities(capsys):
 
 @pytest.mark.parametrize("unavailable", ["engine_version", "fixed_fee"])
 def test_backtrader_preflight(root, make_package, monkeypatch, capsys, unavailable):
-    from flowfolio.simulators import backtrader
+    from flowfolio.engines import backtrader
     package = make_package("raise AssertionError('must not decide')")
     (package / "strategy.py").write_text("raise AssertionError('must not import')\n")
     case = root / "cases/hand_fees.json"
@@ -61,11 +62,11 @@ def test_backtrader_preflight(root, make_package, monkeypatch, capsys, unavailab
         expected = "backtrader 1.9.78.123 is required"
     else:
         monkeypatch.setattr(backtrader, "version", lambda _: "1.9.78.123")
-        simulator = backtrader.BacktraderSimulator
-        monkeypatch.setattr(simulator, "capabilities", simulator.capabilities - {"fixed_fee"})
+        engine = backtrader.BacktraderExecutionEngine
+        monkeypatch.setattr(engine, "capabilities", engine.capabilities - {"fixed_fee"})
         expected = "capability:fixed_fee: unsupported by backtrader"
 
-    args = ["--strategy", str(package), "--scenario", str(case), "--simulator", "backtrader"]
+    args = ["--strategy", str(package), "--scenario", str(case), "--engine", "backtrader"]
     assert main(["check", *args]) == 2
     report = json.loads(capsys.readouterr().out)
     assert report["status"] == "unsupported"

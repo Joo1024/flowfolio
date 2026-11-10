@@ -9,7 +9,7 @@ pytest.importorskip("backtrader")
 
 @pytest.mark.parametrize("strategy", ["dca", "reserve_drawdown", "threshold_rebalance"])
 @pytest.mark.parametrize("case", ["flat", "hand_fees", "allocation_cycle"])
-def test_all_packages_cross_simulator(root, strategy, case):
+def test_all_packages_cross_engine(root, strategy, case):
     a = run(root / "strategies" / strategy, root / "cases" / f"{case}.json")
     b = run(root / "strategies" / strategy, root / "cases" / f"{case}.json", "backtrader")
     assert a.manifest["status"] == b.manifest["status"] == "completed", (a.diagnostics, b.diagnostics)
@@ -37,7 +37,7 @@ def test_seeded_prices_cashflows_and_fees(root, seed):
 
 def test_native_engine_executes_and_accounts(root, monkeypatch):
     import backtrader as bt
-    from flowfolio.simulators.reference import ReferenceSimulator
+    from flowfolio.engines.reference import ReferenceExecutionEngine
     observed = []
     original = bt.brokers.BackBroker._execute
 
@@ -51,10 +51,10 @@ def test_native_engine_executes_and_accounts(root, monkeypatch):
         return result
 
     def forbidden(*args, **kwargs):
-        raise AssertionError("third-party simulator called reference engine")
+        raise AssertionError("third-party engine called reference engine")
 
     monkeypatch.setattr(bt.brokers.BackBroker, "_execute", native)
-    monkeypatch.setattr(ReferenceSimulator, "execute", forbidden)
+    monkeypatch.setattr(ReferenceExecutionEngine, "execute", forbidden)
     result = run(root / "strategies/dca", root / "cases/hand_fees.json", "backtrader")
     assert observed == [(D(102), D(10), D(2), D(10)), (D(102), D(5), D(2), D(15))]
     assert result.valuations[-1]["equity"] == 300

@@ -1,12 +1,12 @@
-"""Simulator backed by Backtrader's native broker."""
+"""Execution engine backed by Backtrader's native broker."""
 from importlib.metadata import PackageNotFoundError, version
 
 from ..adapters.backtrader import execute_backtrader
 from ..model import VERSION
-from . import Simulator
+from . import ExecutionEngine
 
 
-class BacktraderSimulator(Simulator):
+class BacktraderExecutionEngine(ExecutionEngine):
     name = "backtrader"
     version = VERSION
     capabilities = frozenset({

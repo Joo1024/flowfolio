@@ -1,10 +1,10 @@
 """Small Decimal account, intentionally transparent enough to hand-check."""
 from ..model import Fill, ZERO, VERSION
 from ..protocol import CAPABILITIES
-from . import Simulator
+from . import ExecutionEngine
 
 
-class ReferenceSimulator(Simulator):
+class ReferenceExecutionEngine(ExecutionEngine):
     name = "reference"
     version = VERSION
     capabilities = CAPABILITIES

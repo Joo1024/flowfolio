@@ -1,7 +1,7 @@
 # 策略开发指南
 
 公共入口：`from flowfolio import StrategyContext, StrategyDecision, OrderIntent, TransferIntent, D`。
-框架核心没有第三方运行时依赖。不要导入 `flowfolio.simulators` 或引擎对象。
+框架核心没有第三方运行时依赖。不要导入 `flowfolio.engines` 或引擎对象。
 
 ## 包格式
 

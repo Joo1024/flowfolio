@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 from .model import RunResult, Scenario, canonical, VERSION
 from .package import StrategyPackage
-from .sdk import load_simulator, run
+from .sdk import load_engine, run
 from .protocol import compatibility, RESERVED
 from .verify import compare, verify
 
@@ -30,9 +30,9 @@ def parser():
         command.add_argument("--scenario", required=True, type=Path)
         command.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
         if name == "compare":
-            command.add_argument("--simulators", nargs=2, default=["reference", "backtrader"])
+            command.add_argument("--engines", nargs=2, default=["reference", "backtrader"])
         else:
-            command.add_argument("--simulator", default="reference")
+            command.add_argument("--engine", default="reference")
         if name != "check":
             command.add_argument("--output", type=Path, help="new output directory (never overwrite)")
     command = sub.add_parser("verify", help="independently verify a saved ledger")
@@ -45,7 +45,7 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         if args.command == "capabilities":
-            capabilities = {name: sorted(load_simulator(name).capabilities)
+            capabilities = {name: sorted(load_engine(name).capabilities)
                             for name in ("reference", "backtrader")}
             print(canonical({**capabilities, "unsupported": sorted(RESERVED)}))
             return 0
@@ -59,15 +59,15 @@ def main(argv=None):
         params = parameters(args.param)
         if args.command == "check":
             package.parameters(params)
-            simulator = load_simulator(args.simulator)
-            reasons = compatibility(package, scenario, simulator)
+            engine = load_engine(args.engine)
+            reasons = compatibility(package, scenario, engine)
             print(canonical({"status": "unsupported" if reasons else "compatible", "reasons": reasons}))
             return 2 if reasons else 0
         if args.command == "compare":
-            a, b = [run(package, scenario, simulator, params) for simulator in args.simulators]
+            a, b = [run(package, scenario, engine, params) for engine in args.engines]
             differences = compare(a, b)
             completed = all(x.manifest["status"] == "completed" for x in (a, b))
-            report = {"conformant": completed and not differences, "simulators": args.simulators,
+            report = {"conformant": completed and not differences, "engines": args.engines,
                       "statuses": [a.manifest["status"], b.manifest["status"]], "differences": differences}
             if args.output:
                 args.output.mkdir(parents=True, exist_ok=False)
@@ -76,7 +76,7 @@ def main(argv=None):
                 (args.output / "comparison.json").write_text(canonical(report) + "\n", encoding="utf-8")
             print(canonical(report))
             return 0 if report["conformant"] else 1
-        result = run(package, scenario, args.simulator, params)
+        result = run(package, scenario, args.engine, params)
         if args.output:
             result.write(args.output)
             print(canonical({"status": result.manifest["status"], "output": str(args.output),
