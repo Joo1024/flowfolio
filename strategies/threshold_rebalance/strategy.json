@@ -1,0 +1,12 @@
+{
+  "protocol": "1.0", "name": "threshold_rebalance", "version": "0.1.1",
+  "description": "双资产月度配置，偏离阈值时卖出超配资产，以可用现金补足低配资产。",
+  "entrypoint": "strategy.py:Strategy",
+  "requires": ["monthly_contributions", "cash_budget_orders", "fractional_shares"],
+  "parameters": {
+    "equity_symbol": {"type": "string", "default": "EQUITY", "description": "权益资产标的"},
+    "bond_symbol": {"type": "string", "default": "BOND", "description": "防御资产标的"},
+    "equity_weight": {"type": "decimal", "default": "0.6", "minimum": "0.01", "maximum": "0.99", "description": "权益目标权重"},
+    "threshold": {"type": "decimal", "default": "0.05", "minimum": "0.0001", "maximum": "1", "description": "资产绝对权重偏差触发阈值"}
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "protocol": "1.0", "name": "hand_fees", "currency": "USD", "requires": [],
+  "initial_cash": "0", "initial_positions": {},
+  "fees": {"fixed": "1", "rate": "0.01"},
+  "execution": {"timing": "previous_close_next_open", "price_adjustment": "total_return_adjusted", "insufficient_cash": "clip", "slippage": "0"},
+  "bars": [
+    {"date": "2024-01-01", "open": {"EQUITY": "10", "BOND": "10"}, "close": {"EQUITY": "10", "BOND": "10"}},
+    {"date": "2024-02-01", "open": {"EQUITY": "10", "BOND": "10"}, "close": {"EQUITY": "10", "BOND": "10"}},
+    {"date": "2024-03-01", "open": {"EQUITY": "20", "BOND": "10"}, "close": {"EQUITY": "20", "BOND": "10"}}
+  ],
+  "cashflows": [{"date": "2024-02-01", "amount": "102"}, {"date": "2024-03-01", "amount": "102"}],
+  "evaluation": {"expected_metrics": {}}
+}
