@@ -1,0 +1,7 @@
+{
+  "protocol": "1.0", "name": "dca", "version": "0.1.1",
+  "description": "每月将可用投资预算投入单一长期资产。",
+  "entrypoint": "strategy.py:Strategy",
+  "requires": ["monthly_contributions", "cash_budget_orders"],
+  "parameters": {"symbol": {"type": "string", "default": "EQUITY", "description": "长期投资标的"}}
+}

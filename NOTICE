@@ -1,0 +1,12 @@
+flowfolio
+Copyright (C) 2026 flowfolio contributors
+
+Original framework, examples, documentation and strategy packages are licensed
+under GPL-3.0-or-later. See LICENSE for the full GNU GPL version 3 text.
+
+Optional dependency: Backtrader 1.9.78.123, Daniel Rodriguez and contributors,
+GPLv3+ (GPL-3.0-or-later), https://github.com/mementum/backtrader.
+Backtrader is installed separately; its source is not vendored or copied here.
+
+Conceptual inspiration: Harbor, https://github.com/harbor-framework/harbor,
+Apache-2.0. No Harbor source code is included or linked as a dependency.

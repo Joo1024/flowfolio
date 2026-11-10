@@ -1,0 +1,142 @@
+{
+  "protocol": "1.0",
+  "name": "allocation_cycle",
+  "currency": "USD",
+  "requires": [],
+  "initial_cash": "200",
+  "initial_positions": {
+    "EQUITY": "10",
+    "BOND": "5"
+  },
+  "fees": {
+    "fixed": "0.75",
+    "rate": "0.001"
+  },
+  "execution": {
+    "timing": "previous_close_next_open",
+    "price_adjustment": "total_return_adjusted",
+    "insufficient_cash": "clip",
+    "slippage": "0"
+  },
+  "bars": [
+    {
+      "date": "2024-01-01",
+      "open": {
+        "EQUITY": "100",
+        "BOND": "100"
+      },
+      "close": {
+        "EQUITY": "100",
+        "BOND": "100"
+      }
+    },
+    {
+      "date": "2024-02-01",
+      "open": {
+        "EQUITY": "105",
+        "BOND": "100"
+      },
+      "close": {
+        "EQUITY": "120",
+        "BOND": "101"
+      }
+    },
+    {
+      "date": "2024-03-01",
+      "open": {
+        "EQUITY": "115",
+        "BOND": "101"
+      },
+      "close": {
+        "EQUITY": "80",
+        "BOND": "102"
+      }
+    },
+    {
+      "date": "2024-04-01",
+      "open": {
+        "EQUITY": "78",
+        "BOND": "102"
+      },
+      "close": {
+        "EQUITY": "70",
+        "BOND": "101"
+      }
+    },
+    {
+      "date": "2024-05-01",
+      "open": {
+        "EQUITY": "75",
+        "BOND": "101"
+      },
+      "close": {
+        "EQUITY": "130",
+        "BOND": "103"
+      }
+    },
+    {
+      "date": "2024-06-01",
+      "open": {
+        "EQUITY": "135",
+        "BOND": "103"
+      },
+      "close": {
+        "EQUITY": "160",
+        "BOND": "102"
+      }
+    },
+    {
+      "date": "2024-07-01",
+      "open": {
+        "EQUITY": "150",
+        "BOND": "102"
+      },
+      "close": {
+        "EQUITY": "110",
+        "BOND": "105"
+      }
+    },
+    {
+      "date": "2024-08-01",
+      "open": {
+        "EQUITY": "112",
+        "BOND": "105"
+      },
+      "close": {
+        "EQUITY": "140",
+        "BOND": "106"
+      }
+    }
+  ],
+  "cashflows": [
+    {
+      "date": "2024-02-01",
+      "amount": "200"
+    },
+    {
+      "date": "2024-03-01",
+      "amount": "200"
+    },
+    {
+      "date": "2024-04-01",
+      "amount": "200"
+    },
+    {
+      "date": "2024-05-01",
+      "amount": "200"
+    },
+    {
+      "date": "2024-06-01",
+      "amount": "200"
+    },
+    {
+      "date": "2024-07-01",
+      "amount": "200"
+    },
+    {
+      "date": "2024-08-01",
+      "amount": "200"
+    }
+  ],
+  "evaluation": {}
+}
