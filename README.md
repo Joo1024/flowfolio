@@ -15,7 +15,7 @@ Python 3.11+，核心仅标准库，第三方后端通过 extra 安装。
 ## 快速运行
 
 ```bash
-git clone --branch develop https://github.com/Joo1024/flowfolio.git
+git clone --branch v0.1.1 https://github.com/Joo1024/flowfolio.git
 cd flowfolio
 # 依赖、输出和测试临时目录均放在仓库外
 python -m venv ../flowfolio-work/venv
